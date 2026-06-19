@@ -1,0 +1,17 @@
+[package]
+name = "tensou"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+anyhow = "1.0.102"
+bincode = "3.0.0"
+bitvec = "1.0.1"
+blake3 = "1.8.5"
+serde = "1.0.228"
+
+[dev-dependencies]
+file_diff = "1.0.0"
+rand = "0.10.1"
+tempfile = "3.27.0"
