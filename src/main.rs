@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use tensou::{
-    disk::SendSession,
-    net::{AppDaemon, TransferClient},
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
 };
+use tensou::net::{AppDaemon, TransferClient};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -20,21 +20,12 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let server_addr: SocketAddr = "127.0.0.1:5000".parse()?;
-    let file_path = "random_file.bin";
 
-    // 1. Prep the disk
-    let send_session = Arc::new(SendSession::new(
-        &PathBuf::from(file_path),
-        4 * 1024 * 1024,
-    )?);
+    let client = TransferClient::connect(server_addr, Path::new("random_file.bin")).await?;
 
-    // 2. Connect and Handshake
-    let client = TransferClient::connect(server_addr, send_session).await?;
-
-    // 3. Blast the data
     client.process_chunks().await?;
 
-    println!("File sent successfully!");
+    println!("Files sent successfully!");
 
     server.await?;
 

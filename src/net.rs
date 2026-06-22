@@ -1,14 +1,16 @@
 use crate::{
+    ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_QUIC_CHUNK_SIZE,
     crypto::SkipServerVerification,
     disk::{ReceiveSession, SendSession},
-    protocol::{ChunkPacket, Metadata, State},
+    protocol::{ChunkPacket, Manifest, ManifestManager, State},
 };
 use quinn::{ClientConfig, Endpoint, ServerConfig, crypto::rustls::QuicClientConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 // Server listener
@@ -59,7 +61,7 @@ impl AppDaemon {
         let transport_config = Arc::get_mut(&mut server_config.transport)
             .ok_or(anyhow::anyhow!("Couldn't access transport config"))?;
 
-        transport_config.max_concurrent_uni_streams(255_u8.into());
+        transport_config.max_concurrent_uni_streams(MAX_CONCURRENT_STREAMS.into());
 
         Ok(server_config)
     }
@@ -68,7 +70,7 @@ impl AppDaemon {
 // Server Receiver
 struct TransferJob {
     connection: quinn::Connection,
-    session: Arc<Mutex<ReceiveSession>>,
+    sessions: Arc<HashMap<FileId, Arc<tokio::sync::Mutex<ReceiveSession>>>>,
 }
 
 impl TransferJob {
@@ -78,43 +80,51 @@ impl TransferJob {
     ) -> anyhow::Result<Self> {
         let (mut send, mut recv) = connection.accept_bi().await?;
 
-        let max_size = 64 * 1024; // 64KB
+        let max_size = 1 * 1024 * 1024; // 1 MB
         let buf = recv.read_to_end(max_size).await?;
-        let metadata: Metadata = rmp_serde::from_slice(&buf)?;
+        let manifest: Manifest = rmp_serde::from_slice(&buf)?;
 
-        let receive_session = ReceiveSession::new(metadata, target_dir)?;
-        let state_buf = rmp_serde::to_vec(&receive_session.get_state())?;
+        let target_path = target_dir.join(&manifest.job_name);
+        let (states, sessions) = ManifestManager::parse(manifest, &target_path)?;
+
+        let state_buf = rmp_serde::to_vec(&states)?;
 
         send.write_all(&state_buf).await?;
         send.finish()?;
 
         Ok(Self {
             connection,
-            session: Arc::new(Mutex::new(receive_session)),
+            sessions: Arc::new(sessions),
         })
     }
 
     pub async fn process_chunks(self) -> anyhow::Result<()> {
-        while let Ok(mut chunk_stream) = self.connection.accept_uni().await {
-            let conn_clone = self.connection.clone();
-            let session_clone = self.session.clone();
-            const MAX_CHUNK_SIZE: usize = 5 * 1024 * 1024; // 5MB
+        let mut join_set = tokio::task::JoinSet::new();
 
-            tokio::spawn(async move {
+        let mut recv = self.connection.accept_uni().await?;
+        let buf = recv.read_to_end(64).await?;
+        let chunk_count: usize = rmp_serde::from_slice(&buf)?;
+
+        for _ in 0..chunk_count {
+            let mut chunk_stream = self.connection.accept_uni().await?;
+            let sessions_clone = self.sessions.clone();
+
+            join_set.spawn(async move {
                 if let Err(e) = async {
-                    // As it contains raw 4mb data + messagepack headers + hash + index
-                    let buf = chunk_stream.read_to_end(MAX_CHUNK_SIZE).await?;
+                    let buf = chunk_stream.read_to_end(MAX_QUIC_CHUNK_SIZE).await?;
+
                     let chunk: ChunkPacket = rmp_serde::from_slice(&buf)?;
 
-                    let mut session = session_clone
+                    let mut session = sessions_clone
+                        .get(&chunk.file_id)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?
                         .lock()
-                        .map_err(|e| anyhow::anyhow!("Session mutex poisoned: {}", e))?;
+                        .await;
 
-                    session.write_chunk(chunk)?;
+                    session.write_chunk(chunk).await?;
 
                     if session.is_complete() {
                         session.commit()?;
-                        conn_clone.close(0u32.into(), b"Transfer Complete");
                     }
 
                     anyhow::Ok(())
@@ -126,21 +136,29 @@ impl TransferJob {
             });
         }
 
+        while let Some(res) = join_set.join_next().await {
+            if let Err(e) = res {
+                eprintln!("Chunk processing error: {:?}", e);
+            }
+        }
+
+        self.connection.close(0u32.into(), b"Transfer Complete");
+
+        println!("Transfer complete");
         anyhow::Ok(())
     }
 }
 
 pub struct TransferClient {
     connection: quinn::Connection,
-    session: Arc<SendSession>,
-    remote_state: State,
+    sessions: HashMap<FileId, Arc<SendSession>>,
+    remote_states: Vec<State>,
 }
 
 impl TransferClient {
-    pub async fn connect(
-        server_addr: SocketAddr,
-        session: Arc<SendSession>,
-    ) -> anyhow::Result<Self> {
+    pub async fn connect(server_addr: SocketAddr, path: &Path) -> anyhow::Result<Self> {
+        let (manifest, sessions) = ManifestManager::build(path)?;
+
         let client_cfg = Self::configure_client()?;
         let bind_addr: SocketAddr = "0.0.0.0:0".parse()?;
         let mut endpoint = Endpoint::client(bind_addr)?;
@@ -150,38 +168,46 @@ impl TransferClient {
         let connection = endpoint.connect(server_addr, "localhost")?.await?;
 
         let (mut send, mut recv) = connection.open_bi().await?;
-        let buf = rmp_serde::to_vec(&session.get_metadata())?;
+        let buf = rmp_serde::to_vec(&manifest)?;
 
         send.write_all(&buf).await?;
         send.finish()?;
 
         const MAX_METADATA_SIZE: usize = 64 * 1024;
         let buf = recv.read_to_end(MAX_METADATA_SIZE).await?;
-        let remote_state: State = rmp_serde::from_slice(&buf)?;
+        let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;
 
         Ok(Self {
             connection,
-            session,
-            remote_state,
+            sessions,
+            remote_states,
         })
     }
 
     pub async fn process_chunks(self) -> anyhow::Result<()> {
-        let chunk_count = self.session.get_total_chunks();
-        let mut client_tasks = Vec::new();
+        let task_list = self.flatten();
+        let chunk_count = task_list.len();
 
-        for i in 0..chunk_count {
-            if self.remote_state.0.get(i).is_some_and(|v| v == true) {
-                continue;
-            }
+        let mut send = self.connection.open_uni().await?;
+        send.write_all(&rmp_serde::to_vec(&chunk_count)?).await?;
+        send.finish()?;
 
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for (file_id, chunk_id) in task_list {
+            let permit = semaphore.clone().acquire_owned().await?;
+            let session = self.sessions.get(&file_id).expect("shouldn't happen");
+            let session_clone = session.clone();
             let conn_clone = self.connection.clone();
-            let session = self.session.clone();
 
-            let task = tokio::spawn(async move {
+            join_set.spawn(async move {
                 let mut stream = conn_clone.clone().open_uni().await?;
 
-                let chunk = session.get_chunk(i as u64)?;
+                // To capture ownership and drop on task finish (to decrease semaphore count)
+                let _permit = permit;
+
+                let chunk = session_clone.get_chunk(chunk_id).await?;
                 let buf = rmp_serde::to_vec(&chunk)?;
 
                 stream.write_all(&buf).await?;
@@ -189,17 +215,36 @@ impl TransferClient {
 
                 anyhow::Ok(())
             });
-
-            client_tasks.push(task);
         }
 
-        for task in client_tasks {
-            task.await??;
+        while let Some(res) = join_set.join_next().await {
+            res??;
         }
 
         self.connection.closed().await;
 
         Ok(())
+    }
+
+    fn flatten(&self) -> Vec<(FileId, ChunkIndex)> {
+        let mut arr = Vec::new();
+
+        for (file_id, session) in &self.sessions {
+            for chunk_idx in 0..session.get_total_chunks() {
+                if self
+                    .remote_states
+                    .get(*file_id)
+                    .and_then(|s| s.0.get(chunk_idx))
+                    .is_some_and(|v| v == true)
+                {
+                    continue;
+                }
+
+                arr.push((*file_id, chunk_idx as u64));
+            }
+        }
+
+        arr
     }
 
     fn configure_client() -> anyhow::Result<ClientConfig> {
@@ -253,11 +298,7 @@ mod tests {
         // Give the server 50ms to boot up and start listening
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // 5. Client Setup: Initialize the SendSession
-        let send_session = Arc::new(SendSession::new(&source_path, 4 * 1024 * 1024)?);
-
-        // 6. Execute the Transfer
-        let client = TransferClient::connect(bound_server_addr, send_session).await?;
+        let client = TransferClient::connect(bound_server_addr, &source_path).await?;
         client.process_chunks().await?;
 
         // Give the server a tiny moment to flush the final commit() to disk

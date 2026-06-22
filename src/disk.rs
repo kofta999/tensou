@@ -1,36 +1,30 @@
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use std::{
-    fs::{self, File, OpenOptions},
-    os::unix::fs::{FileExt, MetadataExt},
+    fs::{self},
     path::{Path, PathBuf},
+};
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
 use crate::protocol::{ChunkPacket, Metadata, State};
 
 pub struct SendSession {
     metadata: Metadata,
-    file_fd: File,
     total_chunks: usize,
+    full_path: PathBuf,
 }
 
 impl SendSession {
-    pub fn new(file_path: &Path, chunk_size: u64) -> anyhow::Result<Self> {
-        let metadata = fs::metadata(file_path)?;
-        let size = metadata.size();
-        let total_chunks: usize = ((size + chunk_size - 1) / chunk_size).try_into()?;
-        let file_fd = OpenOptions::new().read(true).open(file_path)?;
+    pub fn new(metadata: Metadata, full_path: &Path) -> anyhow::Result<Self> {
+        let total_chunks: usize =
+            ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
 
         Ok(Self {
-            metadata: Metadata {
-                filename: file_path
-                    .file_name()
-                    .map(|v| v.to_string_lossy().into_owned())
-                    .ok_or(anyhow::anyhow!("Cannot get filename of file path"))?,
-                size,
-                chunk_size,
-            },
+            metadata,
             total_chunks,
-            file_fd,
+            full_path: full_path.to_path_buf(),
         })
     }
 
@@ -42,13 +36,16 @@ impl SendSession {
         self.total_chunks
     }
 
-    pub fn get_chunk(&self, index: u64) -> anyhow::Result<ChunkPacket> {
+    pub async fn get_chunk(&self, index: u64) -> anyhow::Result<ChunkPacket> {
         let offset = index * self.metadata.chunk_size;
         let mut buf = self.get_read_buffer(offset);
 
-        self.file_fd.read_exact_at(&mut buf, offset)?;
+        let mut fd = File::open(&self.full_path).await?;
+        fd.seek(std::io::SeekFrom::Start(offset)).await?;
+        fd.read_exact(&mut buf).await?;
 
         Ok(ChunkPacket {
+            file_id: self.metadata.file_id,
             index,
             hash: Self::hash_chunk(&buf),
             bytes: buf.to_vec(),
@@ -78,23 +75,25 @@ pub struct ReceiveSession {
     state: State,
     state_file_path: PathBuf,
     part_file_path: PathBuf,
-    file_fd: File,
-    total_chunks: usize,
     target_path: PathBuf,
 }
 
 impl ReceiveSession {
     /// Creates sparse file, loads state if exists
-    pub fn new(metadata: Metadata, target_dir: &Path) -> anyhow::Result<Self> {
+    pub fn new(metadata: Metadata, target_path: &Path) -> anyhow::Result<Self> {
         let total_chunks: usize =
             ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
 
-        // TODO: Add path traversal checks in filename
+        let base_path = if metadata.relative_path.is_empty() {
+            target_path.to_path_buf()
+        } else {
+            target_path.join(Path::new(&metadata.relative_path))
+        };
 
-        let mut state_file_path = target_dir.join(&metadata.filename).clone();
+        let mut state_file_path = base_path.clone();
         state_file_path.add_extension("state");
 
-        let mut part_file_path = target_dir.join(&metadata.filename).clone();
+        let mut part_file_path = base_path;
         part_file_path.add_extension("part");
 
         let state = if state_file_path.exists() {
@@ -113,24 +112,17 @@ impl ReceiveSession {
             state
         };
 
-        let file_fd = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&part_file_path)?;
-
         Ok(Self {
             state,
             state_file_path,
             part_file_path,
-            file_fd,
             metadata,
-            total_chunks,
-            target_path: target_dir.into(),
+            target_path: target_path.into(),
         })
     }
 
     fn allocate_sparse_file(path: &PathBuf, size: u64) -> anyhow::Result<()> {
-        let file = File::create(&path)?;
+        let file = fs::File::create(&path)?;
         file.set_len(size as u64)?;
 
         Ok(())
@@ -141,11 +133,18 @@ impl ReceiveSession {
         Ok(())
     }
 
-    pub fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
+    pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
         if packet.hash == Self::hash_chunk(&packet.bytes) {
             let offset = packet.index * self.metadata.chunk_size;
 
-            self.file_fd.write_all_at(&packet.bytes, offset)?;
+            let mut file_fd = tokio::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.part_file_path)
+                .await?;
+
+            file_fd.seek(std::io::SeekFrom::Start(offset)).await?;
+            file_fd.write_all(&packet.bytes).await?;
 
             self.state.0.set(packet.index as usize, true);
 
@@ -166,15 +165,17 @@ impl ReceiveSession {
         self.state.0.all()
     }
 
-    /// Must be called if is_complete == true
     pub fn commit(&mut self) -> anyhow::Result<()> {
         // No need to close file as it should implement Drop
         fs::remove_file(&self.state_file_path)?;
 
-        fs::rename(
-            &self.part_file_path,
-            self.target_path.join(&self.metadata.filename),
-        )?;
+        let dest_path = if self.metadata.relative_path.is_empty() {
+            self.target_path.clone()
+        } else {
+            self.target_path.join(&self.metadata.relative_path)
+        };
+
+        fs::rename(&self.part_file_path, dest_path)?;
 
         Ok(())
     }
@@ -186,19 +187,19 @@ impl ReceiveSession {
 
 #[cfg(test)]
 mod tests {
+    use crate::CHUNK_SIZE;
+
     use super::*;
     use rand::Rng;
     use tempfile::tempdir;
 
-    #[test]
-    fn test_full_local_transfer() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn test_full_local_transfer() -> anyhow::Result<()> {
         // 1. Setup: Create a temporary directory
         let source_dir = tempdir()?;
         let dest_dir = tempdir()?;
         let source_path = source_dir.path().join("source.bin");
         let received_dir = dest_dir.path();
-
-        let chunk_size = 4 * 1024 * 1024;
 
         // 2. Mock Data: Create a file with exactly 10MB of random data
         // (Write logic to fill `source_path` with 10MB of bytes)
@@ -206,9 +207,13 @@ mod tests {
         rand::rng().fill_bytes(&mut buffer);
         fs::write(&source_path, &buffer)?;
 
-        // 3. Initialize: Create your SendSession (chunk size 4MB)
-        // (Write logic to instantiate SendSession)
-        let send_session = SendSession::new(&source_path, chunk_size)?;
+        let metadata = Metadata {
+            file_id: 0,
+            relative_path: "source.bin".to_string(),
+            size: 10 * 1024 * 1024,
+            chunk_size: CHUNK_SIZE,
+        };
+        let send_session = SendSession::new(metadata, &source_path)?;
 
         // 4. Initialize: Create your ReceiveSession using the sender's metadata
         let mut receive_session = ReceiveSession::new(send_session.get_metadata(), &received_dir)?;
@@ -219,8 +224,8 @@ mod tests {
         // Assert that write_chunk returns true (hash matched).
 
         for i in 0..send_session.get_total_chunks() {
-            let chunk = send_session.get_chunk(i as u64)?;
-            assert!(receive_session.write_chunk(chunk)?);
+            let chunk = send_session.get_chunk(i as u64).await?;
+            assert!(receive_session.write_chunk(chunk).await?);
         }
 
         // 6. The Commit:
