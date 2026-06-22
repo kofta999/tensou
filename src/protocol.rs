@@ -6,7 +6,7 @@ use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
 use bitvec::{order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, os::unix::fs::MetadataExt, path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 use walkdir::WalkDir;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -92,7 +92,7 @@ impl ManifestManager {
                     .strip_prefix(path)?
                     .to_string_lossy()
                     .into_owned(),
-                size: entry.metadata()?.size(),
+                size: entry.metadata()?.len(),
             };
 
             sessions.insert(

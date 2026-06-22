@@ -1,14 +1,16 @@
 use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_QUIC_CHUNK_SIZE,
     crypto::SkipServerVerification,
+    discovery,
     disk::{ReceiveSession, SendSession},
     protocol::{ChunkPacket, Manifest, ManifestManager, State},
 };
+use mdns_sd::ServiceDaemon;
 use quinn::{ClientConfig, Endpoint, ServerConfig, crypto::rustls::QuicClientConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -16,15 +18,22 @@ use std::{
 // Server listener
 pub struct AppDaemon {
     endpoint: quinn::Endpoint,
+    _discovery_daemon: ServiceDaemon,
 }
 
 impl AppDaemon {
-    pub fn new(port: u16) -> anyhow::Result<Self> {
+    pub fn new(bind_addr: SocketAddr) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
-        let bind_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port));
-        let endpoint = Endpoint::server(server_config, bind_addr)?;
 
-        Ok(Self { endpoint })
+        let endpoint = Endpoint::server(server_config, bind_addr)?;
+        let actual_port = endpoint.local_addr()?.port();
+
+        let _discovery_daemon = discovery::register_service(actual_port)?;
+
+        Ok(Self {
+            endpoint,
+            _discovery_daemon,
+        })
     }
 
     // TODO: target_dir will be replaced by a Config struct later
@@ -284,7 +293,7 @@ mod tests {
         std::fs::write(&source_path, &buffer)?;
 
         // 3. Server Setup: Bind to port 0 (OS assigns a random free port)
-        let app_daemon = AppDaemon::new(0)?;
+        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?)?;
 
         // Grab the actual port the OS assigned us so the client knows where to dial
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
