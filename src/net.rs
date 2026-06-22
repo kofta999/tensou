@@ -1,5 +1,5 @@
 use crate::{
-    ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_QUIC_CHUNK_SIZE,
+    ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE, MAX_QUIC_CHUNK_SIZE,
     crypto::SkipServerVerification,
     discovery,
     disk::{ReceiveSession, SendSession},
@@ -182,8 +182,7 @@ impl TransferClient {
         send.write_all(&buf).await?;
         send.finish()?;
 
-        const MAX_METADATA_SIZE: usize = 64 * 1024;
-        let buf = recv.read_to_end(MAX_METADATA_SIZE).await?;
+        let buf = recv.read_to_end(MAX_METADATA_SIZE as usize).await?;
         let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;
 
         Ok(Self {

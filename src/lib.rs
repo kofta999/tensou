@@ -1,6 +1,7 @@
 use std::path::{Component, Path};
 
 pub const CHUNK_SIZE: u64 = 4 * 1024 * 1024;
+pub const MAX_METADATA_SIZE: u64 = 1 * 1024 * 1024;
 
 // As it contains raw 4mb data + messagepack headers + hash + index
 pub const MAX_QUIC_CHUNK_SIZE: usize = 5 * 1024 * 1024;
@@ -10,6 +11,7 @@ pub const SERVICE_TYPE: &str = "_tensou._udp.local.";
 pub type FileId = usize;
 pub type ChunkIndex = u64;
 
+pub mod cli;
 pub mod crypto;
 pub mod discovery;
 pub mod disk;
