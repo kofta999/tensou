@@ -6,7 +6,7 @@ use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
 use bitvec::{order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
 use walkdir::WalkDir;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -47,9 +47,11 @@ impl ManifestManager {
     ) -> anyhow::Result<(
         Vec<State>,
         HashMap<FileId, Arc<tokio::sync::Mutex<ReceiveSession>>>,
+        u64,
     )> {
         let mut sessions = HashMap::new();
         let mut states = Vec::new();
+        let mut remaining_bytes = 0;
 
         for (i, metadata) in manifest.files.into_iter().enumerate() {
             if !is_safe_relative_path(Path::new(&metadata.relative_path)) {
@@ -68,10 +70,11 @@ impl ManifestManager {
 
             let session = ReceiveSession::new(metadata, target_path)?;
             states.push(session.get_state());
+            remaining_bytes += session.get_remaining_size();
             sessions.insert(i, Arc::new(tokio::sync::Mutex::new(session)));
         }
 
-        Ok((states, sessions))
+        Ok((states, sessions, remaining_bytes))
     }
 
     pub fn build(path: &Path) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
@@ -114,4 +117,19 @@ impl ManifestManager {
             sessions,
         ))
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum DaemonEvent {
+    /// Fired when a sender connects and sends the Manifest
+    TransferStarted {
+        transfer_id: u32,
+        peer: SocketAddr,
+        total_bytes: u64,
+        job_name: String,
+    },
+    /// Fired every time a chunk is successfully written to disk
+    ChunkReceived { transfer_id: u32, bytes: u64 },
+    /// Fired when the final file is committed
+    TransferComplete { transfer_id: u32 },
 }

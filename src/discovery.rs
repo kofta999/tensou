@@ -32,8 +32,6 @@ pub async fn scan_for_receivers(tx: mpsc::Sender<DiscoveredDevice>) -> anyhow::R
 
     let mut discovered = HashSet::new();
 
-    println!("Scanning local network devices...");
-
     while let Ok(event) = receiver.recv_async().await {
         if let ServiceEvent::ServiceResolved(info) = event {
             if let Some(ScopedIp::V4(addr)) = info.get_addresses().iter().find(|ip| ip.is_ipv4()) {
@@ -53,7 +51,6 @@ pub async fn scan_for_receivers(tx: mpsc::Sender<DiscoveredDevice>) -> anyhow::R
         }
     }
 
-    println!("Scan complete.");
     Ok(())
 }
 
@@ -84,20 +81,25 @@ mod tests {
         });
 
         // 4. Await the discovery with a strict timeout so a failing test doesn't hang forever
-        let discovery_result = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
+        let start = std::time::Instant::now();
+        let mut found = false;
+        while start.elapsed() < Duration::from_secs(3) {
+            if let Ok(Some(device)) =
+                tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+            {
+                println!("Found device: {} at {}", device.hostname, device.addr);
+                if device.addr.port() == test_port {
+                    found = true;
+                    break;
+                }
+            } else if rx.is_empty() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
 
         // 5. Verification
-        match discovery_result {
-            Ok(Some(device)) => {
-                println!("Found test device: {} at {}", device.hostname, device.addr);
-
-                // Assert we found OUR test instance, not something else on the network
-                assert_eq!(device.addr.port(), test_port);
-            }
-            Ok(None) => anyhow::bail!("Channel closed without finding a device"),
-            Err(_) => anyhow::bail!(
-                "mDNS scan timed out. Your OS might be dropping loopback multicast packets."
-            ),
+        if !found {
+            anyhow::bail!("Did not discover the test device on port {}", test_port);
         }
 
         // 6. Cleanup

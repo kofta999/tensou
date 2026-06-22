@@ -1,9 +1,13 @@
 use crate::{
+    MAX_QUIC_CHUNK_SIZE,
     discovery::{self, DiscoveredDevice},
     net::{AppDaemon, TransferClient},
+    protocol::DaemonEvent,
 };
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
 };
@@ -89,23 +93,90 @@ pub async fn run() -> anyhow::Result<()> {
                 }
             };
 
-            println!("Connecting to {}...", selected_addr);
-
             let client = TransferClient::connect(selected_addr, &path).await?;
-            client.process_chunks().await?;
+            let total_bytes = client.get_remaining_bytes();
 
-            println!("Files sent successfully!");
+            let pb = create_transfer_pb(total_bytes, "", true);
+
+            let (tx, mut rx) = mpsc::channel::<u64>(MAX_QUIC_CHUNK_SIZE);
+
+            let transfer_handle =
+                tokio::spawn(async move { client.process_chunks(Some(tx)).await });
+
+            while let Some(bytes_sent) = rx.recv().await {
+                pb.inc(bytes_sent);
+            }
+
+            transfer_handle.await??;
 
             Ok(())
         }
         Commands::Receive { port, output } => {
             let target_dir = resolve_save_directory(output)?;
             let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
-            let daemon = AppDaemon::new(bind_addr)?;
 
-            daemon.run(target_dir).await;
+            let (tx, mut rx) = tokio::sync::broadcast::channel::<DaemonEvent>(MAX_QUIC_CHUNK_SIZE);
+
+            let daemon = AppDaemon::new(bind_addr, Some(tx))?;
+
+            tokio::spawn(async move {
+                daemon.run(target_dir).await;
+            });
+
+            let multi_progress = indicatif::MultiProgress::new();
+            let mut active_bars: std::collections::HashMap<u32, indicatif::ProgressBar> =
+                HashMap::new();
+
+            while let Ok(event) = rx.recv().await {
+                match event {
+                    DaemonEvent::TransferStarted {
+                        transfer_id,
+                        total_bytes,
+                        job_name,
+                        ..
+                    } => {
+                        let pb =
+                            multi_progress.add(create_transfer_pb(total_bytes, &job_name, false));
+                        active_bars.insert(transfer_id, pb);
+                    }
+                    DaemonEvent::ChunkReceived { transfer_id, bytes } => {
+                        if let Some(pb) = active_bars.get(&transfer_id) {
+                            pb.inc(bytes);
+                        }
+                    }
+                    DaemonEvent::TransferComplete { transfer_id } => {
+                        if let Some(pb) = active_bars.remove(&transfer_id) {
+                            pb.set_style(
+                                pb.style()
+                                    .clone()
+                                    .template("{spinner:.green} {msg:.green} [{elapsed_precise}] ✔ Completed!")
+                                    .expect("Invalid style")
+                            );
+                            pb.finish_with_message("Done!");
+                        }
+                    }
+                }
+            }
 
             Ok(())
         }
     }
+}
+
+pub fn create_transfer_pb(total_bytes: u64, name: &str, is_sender: bool) -> ProgressBar {
+    let pb = ProgressBar::new(total_bytes);
+
+    let style = ProgressStyle::default_bar()
+        .template(
+            "{spinner:.green} {msg}\n{bytes:>10} / {total_bytes:10} [{bar:40.cyan/blue}] {percent}% {bytes_per_sec} | {eta}"
+        )
+        .unwrap()
+        .progress_chars("━╾─");
+
+    pb.set_style(style);
+
+    if !is_sender {
+        pb.set_message(format!("Receiving: {}", name));
+    }
+    pb
 }

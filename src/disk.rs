@@ -36,6 +36,16 @@ impl SendSession {
         self.total_chunks
     }
 
+    pub fn get_chunk_size(&self, index: u64) -> u64 {
+        let offset = index * self.metadata.chunk_size;
+        let diff = self.metadata.size - offset;
+        if diff < self.metadata.chunk_size {
+            diff
+        } else {
+            self.metadata.chunk_size
+        }
+    }
+
     pub async fn get_chunk(&self, index: u64) -> anyhow::Result<ChunkPacket> {
         let offset = index * self.metadata.chunk_size;
         let mut buf = self.get_read_buffer(offset);
@@ -69,13 +79,13 @@ impl SendSession {
     }
 }
 
-#[derive(Debug)]
 pub struct ReceiveSession {
     metadata: Metadata,
     state: State,
     state_file_path: PathBuf,
     part_file_path: PathBuf,
     target_path: PathBuf,
+    file: Option<File>,
 }
 
 impl ReceiveSession {
@@ -118,6 +128,7 @@ impl ReceiveSession {
             part_file_path,
             metadata,
             target_path: target_path.into(),
+            file: None,
         })
     }
 
@@ -133,15 +144,24 @@ impl ReceiveSession {
         Ok(())
     }
 
+    pub async fn save_state_async(&self) -> anyhow::Result<()> {
+        tokio::fs::write(&self.state_file_path, self.state.0.as_raw_slice()).await?;
+        Ok(())
+    }
+
     pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
         if packet.hash == Self::hash_chunk(&packet.bytes) {
             let offset = packet.index * self.metadata.chunk_size;
 
-            let mut file_fd = tokio::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&self.part_file_path)
-                .await?;
+            if self.file.is_none() {
+                let file = tokio::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&self.part_file_path)
+                    .await?;
+                self.file = Some(file);
+            }
+            let file_fd = self.file.as_mut().unwrap();
 
             file_fd.seek(std::io::SeekFrom::Start(offset)).await?;
             file_fd.write_all(&packet.bytes).await?;
@@ -149,7 +169,7 @@ impl ReceiveSession {
             self.state.0.set(packet.index as usize, true);
 
             // TODO: handle saving in a batch outside the chunk loop to not do an extra disk write every 4MB
-            self.save_state()?;
+            self.save_state_async().await?;
 
             Ok(true)
         } else {
@@ -161,12 +181,33 @@ impl ReceiveSession {
         self.state.clone()
     }
 
+    pub fn get_remaining_size(&self) -> u64 {
+        let mut total = 0;
+        for idx in 0..self.state.0.len() {
+            if let Some(val) = self.state.0.get(idx) {
+                if !*val {
+                    let offset = idx as u64 * self.metadata.chunk_size;
+                    let diff = self.metadata.size - offset;
+                    let size = if diff < self.metadata.chunk_size {
+                        diff
+                    } else {
+                        self.metadata.chunk_size
+                    };
+                    total += size;
+                }
+            }
+        }
+        total
+    }
+
     pub fn is_complete(&self) -> bool {
         self.state.0.all()
     }
 
     pub fn commit(&mut self) -> anyhow::Result<()> {
-        // No need to close file as it should implement Drop
+        // Drop the open file handle so it is closed and we can rename/remove it
+        self.file = None;
+
         fs::remove_file(&self.state_file_path)?;
 
         let dest_path = if self.metadata.relative_path.is_empty() {

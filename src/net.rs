@@ -3,7 +3,7 @@ use crate::{
     crypto::SkipServerVerification,
     discovery,
     disk::{ReceiveSession, SendSession},
-    protocol::{ChunkPacket, Manifest, ManifestManager, State},
+    protocol::{ChunkPacket, DaemonEvent, Manifest, ManifestManager, State},
 };
 use mdns_sd::ServiceDaemon;
 use quinn::{ClientConfig, Endpoint, ServerConfig, crypto::rustls::QuicClientConfig};
@@ -14,15 +14,20 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tokio::sync::{broadcast, mpsc};
 
 // Server listener
 pub struct AppDaemon {
     endpoint: quinn::Endpoint,
+    event_tx: Option<broadcast::Sender<DaemonEvent>>,
     _discovery_daemon: ServiceDaemon,
 }
 
 impl AppDaemon {
-    pub fn new(bind_addr: SocketAddr) -> anyhow::Result<Self> {
+    pub fn new(
+        bind_addr: SocketAddr,
+        event_tx: Option<broadcast::Sender<DaemonEvent>>,
+    ) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
 
         let endpoint = Endpoint::server(server_config, bind_addr)?;
@@ -32,6 +37,7 @@ impl AppDaemon {
 
         Ok(Self {
             endpoint,
+            event_tx,
             _discovery_daemon,
         })
     }
@@ -41,16 +47,31 @@ impl AppDaemon {
         // Waiting for connections, similar to HTTP servers
         while let Some(incoming) = self.endpoint.accept().await {
             let target_dir_clone = target_dir.clone();
+            let event_tx_clone = self.event_tx.clone();
+            let transfer_id = rand::random::<u32>();
+
             tokio::spawn(async move {
                 // Get the actual connection
                 let connection = incoming.await?;
+                let peer = connection.remote_address();
 
                 if let Ok(transfer_job) =
                     TransferJob::handle_handshake(connection, &target_dir_clone).await
                 {
                     println!("Handshake successful, starting transfer...");
 
-                    transfer_job.process_chunks().await?;
+                    if let Some(ref tx) = event_tx_clone {
+                        let _ = tx.send(DaemonEvent::TransferStarted {
+                            transfer_id,
+                            peer,
+                            total_bytes: transfer_job.total_size,
+                            job_name: transfer_job.job_name.to_string(),
+                        });
+                    }
+
+                    transfer_job
+                        .process_chunks(event_tx_clone, transfer_id)
+                        .await?;
                 } else {
                     eprintln!("Handshake failed!");
                 };
@@ -79,6 +100,8 @@ impl AppDaemon {
 // Server Receiver
 struct TransferJob {
     connection: quinn::Connection,
+    total_size: u64,
+    job_name: String,
     sessions: Arc<HashMap<FileId, Arc<tokio::sync::Mutex<ReceiveSession>>>>,
 }
 
@@ -93,8 +116,10 @@ impl TransferJob {
         let buf = recv.read_to_end(max_size).await?;
         let manifest: Manifest = rmp_serde::from_slice(&buf)?;
 
+        let job_name = manifest.job_name.clone();
+
         let target_path = target_dir.join(&manifest.job_name);
-        let (states, sessions) = ManifestManager::parse(manifest, &target_path)?;
+        let (states, sessions, total_size) = ManifestManager::parse(manifest, &target_path)?;
 
         let state_buf = rmp_serde::to_vec(&states)?;
 
@@ -103,11 +128,17 @@ impl TransferJob {
 
         Ok(Self {
             connection,
+            total_size,
+            job_name,
             sessions: Arc::new(sessions),
         })
     }
 
-    pub async fn process_chunks(self) -> anyhow::Result<()> {
+    pub async fn process_chunks(
+        self,
+        progress_tx: Option<broadcast::Sender<DaemonEvent>>,
+        transfer_id: u32,
+    ) -> anyhow::Result<()> {
         let mut join_set = tokio::task::JoinSet::new();
 
         let mut recv = self.connection.accept_uni().await?;
@@ -117,23 +148,47 @@ impl TransferJob {
         for _ in 0..chunk_count {
             let mut chunk_stream = self.connection.accept_uni().await?;
             let sessions_clone = self.sessions.clone();
+            let tx_clone = progress_tx.clone();
 
             join_set.spawn(async move {
                 if let Err(e) = async {
+                    let start = std::time::Instant::now();
                     let buf = chunk_stream.read_to_end(MAX_QUIC_CHUNK_SIZE).await?;
+                    let net_time = start.elapsed();
 
                     let chunk: ChunkPacket = rmp_serde::from_slice(&buf)?;
+                    let size = chunk.bytes.len();
+                    let idx = chunk.index;
 
+                    let start_lock = std::time::Instant::now();
                     let mut session = sessions_clone
                         .get(&chunk.file_id)
                         .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?
                         .lock()
                         .await;
+                    let lock_wait_time = start_lock.elapsed();
 
+                    let start_write = std::time::Instant::now();
                     session.write_chunk(chunk).await?;
+                    let write_time = start_write.elapsed();
 
                     if session.is_complete() {
                         session.commit()?;
+                    }
+
+                    if lock_wait_time > std::time::Duration::from_millis(50) {
+                        println!(
+                            "Chunk {} statistics: Net read: {:?}, Lock wait: {:?}, Disk write: {:?}",
+                            idx, net_time, lock_wait_time, write_time
+                        );
+                    }
+
+
+                    if let Some(tx) = tx_clone {
+                        let _ = tx.send(DaemonEvent::ChunkReceived {
+                            transfer_id,
+                            bytes: size as u64,
+                        })?;
                     }
 
                     anyhow::Ok(())
@@ -153,7 +208,10 @@ impl TransferJob {
 
         self.connection.close(0u32.into(), b"Transfer Complete");
 
-        println!("Transfer complete");
+        if let Some(tx) = progress_tx {
+            let _ = tx.send(DaemonEvent::TransferComplete { transfer_id });
+        }
+
         anyhow::Ok(())
     }
 }
@@ -192,7 +250,20 @@ impl TransferClient {
         })
     }
 
-    pub async fn process_chunks(self) -> anyhow::Result<()> {
+    pub fn get_remaining_bytes(&self) -> u64 {
+        let mut total = 0;
+        for (file_id, chunk_idx) in self.flatten() {
+            if let Some(session) = self.sessions.get(&file_id) {
+                total += session.get_chunk_size(chunk_idx);
+            }
+        }
+        total
+    }
+
+    pub async fn process_chunks(
+        self,
+        progress_tx: Option<mpsc::Sender<u64>>,
+    ) -> anyhow::Result<()> {
         let task_list = self.flatten();
         let chunk_count = task_list.len();
 
@@ -208,6 +279,7 @@ impl TransferClient {
             let session = self.sessions.get(&file_id).expect("shouldn't happen");
             let session_clone = session.clone();
             let conn_clone = self.connection.clone();
+            let tx_clone = progress_tx.clone();
 
             join_set.spawn(async move {
                 let mut stream = conn_clone.clone().open_uni().await?;
@@ -220,6 +292,11 @@ impl TransferClient {
 
                 stream.write_all(&buf).await?;
                 stream.finish()?;
+
+                if let Some(tx) = tx_clone {
+                    // No need to throw errors on progress reports
+                    let _ = tx.send(chunk.bytes.len() as u64).await;
+                }
 
                 anyhow::Ok(())
             });
@@ -292,7 +369,7 @@ mod tests {
         std::fs::write(&source_path, &buffer)?;
 
         // 3. Server Setup: Bind to port 0 (OS assigns a random free port)
-        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?)?;
+        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?, None)?;
 
         // Grab the actual port the OS assigned us so the client knows where to dial
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
@@ -307,7 +384,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let client = TransferClient::connect(bound_server_addr, &source_path).await?;
-        client.process_chunks().await?;
+        client.process_chunks(None).await?;
 
         // Give the server a tiny moment to flush the final commit() to disk
         tokio::time::sleep(Duration::from_millis(100)).await;
