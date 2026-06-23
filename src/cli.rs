@@ -1,7 +1,7 @@
 use crate::{
     MAX_QUIC_CHUNK_SIZE,
     discovery::{self, DiscoveredDevice},
-    net::{AppDaemon, TransferClient},
+    net::{AppDaemon, Sender},
     protocol::DaemonEvent,
 };
 use clap::{Parser, Subcommand};
@@ -93,7 +93,7 @@ pub async fn run() -> anyhow::Result<()> {
                 }
             };
 
-            let client = TransferClient::connect(selected_addr, &path).await?;
+            let client = Sender::connect(selected_addr, &path).await?;
             let total_bytes = client.get_remaining_bytes();
 
             let pb = create_transfer_pb(total_bytes, "", true);
