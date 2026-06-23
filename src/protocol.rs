@@ -6,7 +6,13 @@ use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
 use bitvec::{order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::oneshot;
 use walkdir::WalkDir;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -122,6 +128,15 @@ impl ManifestManager {
 #[derive(Debug, Clone)]
 pub enum DaemonEvent {
     /// Fired when a sender connects and sends the Manifest
+    ConsentRequested {
+        peer: SocketAddr,
+        job_name: String,
+        // total_bytes: u64,
+        // file_count: u64,
+        // Escape hatch for non-clone types with multiple access points
+        reply_tx: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    },
+    /// Fired when the receiver accepts the transfer
     TransferStarted {
         transfer_id: u32,
         peer: SocketAddr,

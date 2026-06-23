@@ -22,6 +22,7 @@ serde_bytes = "0.11.19"
 tokio = { version = "1.52.3", features = ["full"] }
 walkdir = "2.5.0"
 rand = "0.10.1"
+dialoguer = "0.12.0"
 
 [dev-dependencies]
 file_diff = "1.0.0"

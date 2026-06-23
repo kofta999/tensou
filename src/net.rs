@@ -12,9 +12,12 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::{broadcast, mpsc},
+};
 
 // Server listener
 pub struct AppDaemon {
@@ -55,23 +58,38 @@ impl AppDaemon {
                 let connection = incoming.await?;
                 let peer = connection.remote_address();
 
-                if let Ok(transfer_job) =
-                    TransferJob::handle_handshake(connection, &target_dir_clone).await
-                {
-                    println!("Handshake successful, starting transfer...");
+                if let Ok(pending) = PendingTransfer::read_manifest(connection).await {
+                    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
 
                     if let Some(ref tx) = event_tx_clone {
-                        let _ = tx.send(DaemonEvent::TransferStarted {
-                            transfer_id,
+                        tx.send(DaemonEvent::ConsentRequested {
                             peer,
-                            total_bytes: transfer_job.total_size,
-                            job_name: transfer_job.job_name.to_string(),
-                        });
+                            job_name: pending.manifest.job_name.to_string(),
+                            reply_tx: Arc::new(Mutex::new(Some(reply_tx))),
+                        })?;
                     }
 
-                    transfer_job
-                        .process_chunks(event_tx_clone, transfer_id)
-                        .await?;
+                    let is_accepted = reply_rx.await.unwrap_or(false);
+
+                    if is_accepted {
+                        let transfer_job = pending.accept(&target_dir_clone).await?;
+
+                        if let Some(ref tx) = event_tx_clone {
+                            let _ = tx.send(DaemonEvent::TransferStarted {
+                                transfer_id,
+                                peer,
+                                total_bytes: transfer_job.total_size,
+                                job_name: transfer_job.job_name.to_string(),
+                            });
+                        }
+
+                        transfer_job
+                            .process_chunks(event_tx_clone, transfer_id)
+                            .await?;
+                    } else {
+                        println!("Transfer from {} was rejected.", peer);
+                        pending.reject().await?;
+                    }
                 } else {
                     eprintln!("Handshake failed!");
                 };
@@ -97,6 +115,58 @@ impl AppDaemon {
     }
 }
 
+struct PendingTransfer {
+    connection: quinn::Connection,
+    send_stream: quinn::SendStream,
+    manifest: Manifest,
+}
+
+impl PendingTransfer {
+    pub async fn read_manifest(connection: quinn::Connection) -> anyhow::Result<Self> {
+        let (send_stream, mut recv_stream) = connection.accept_bi().await?;
+
+        let buf = recv_stream.read_to_end(MAX_METADATA_SIZE as usize).await?;
+        let manifest: Manifest = rmp_serde::from_slice(&buf)?;
+
+        Ok(Self {
+            connection,
+            manifest,
+            send_stream,
+        })
+    }
+
+    pub async fn accept(mut self, target_dir: &Path) -> anyhow::Result<TransferJob> {
+        self.send_stream.write_u8(1).await?;
+
+        let job_name = self.manifest.job_name.clone();
+        let target_path = target_dir.join(&self.manifest.job_name);
+        let (states, sessions, total_size) = tokio::task::spawn_blocking(move || {
+            ManifestManager::parse(self.manifest, &target_path)
+        })
+        .await??;
+
+        let state_buf = rmp_serde::to_vec(&states)?;
+
+        self.send_stream.write_all(&state_buf).await?;
+        self.send_stream.finish()?;
+
+        Ok(TransferJob {
+            connection: self.connection,
+            total_size,
+            job_name,
+            sessions: Arc::new(sessions),
+        })
+    }
+
+    pub async fn reject(mut self) -> anyhow::Result<()> {
+        self.send_stream.write_u8(0).await?;
+        self.send_stream.finish()?;
+        self.connection
+            .close(0u32.into(), b"Transfer rejected by user");
+        Ok(())
+    }
+}
+
 // Server Receiver
 struct TransferJob {
     connection: quinn::Connection,
@@ -106,34 +176,6 @@ struct TransferJob {
 }
 
 impl TransferJob {
-    pub async fn handle_handshake(
-        connection: quinn::Connection,
-        target_dir: &Path,
-    ) -> anyhow::Result<Self> {
-        let (mut send, mut recv) = connection.accept_bi().await?;
-
-        let max_size = 1 * 1024 * 1024; // 1 MB
-        let buf = recv.read_to_end(max_size).await?;
-        let manifest: Manifest = rmp_serde::from_slice(&buf)?;
-
-        let job_name = manifest.job_name.clone();
-
-        let target_path = target_dir.join(&manifest.job_name);
-        let (states, sessions, total_size) = ManifestManager::parse(manifest, &target_path)?;
-
-        let state_buf = rmp_serde::to_vec(&states)?;
-
-        send.write_all(&state_buf).await?;
-        send.finish()?;
-
-        Ok(Self {
-            connection,
-            total_size,
-            job_name,
-            sessions: Arc::new(sessions),
-        })
-    }
-
     pub async fn process_chunks(
         self,
         progress_tx: Option<broadcast::Sender<DaemonEvent>>,
@@ -239,6 +281,11 @@ impl TransferClient {
 
         send.write_all(&buf).await?;
         send.finish()?;
+
+        let is_accepted = recv.read_u8().await?;
+        if is_accepted == 0 {
+            anyhow::bail!("The receiver rejected your transfer request.");
+        }
 
         let buf = recv.read_to_end(MAX_METADATA_SIZE as usize).await?;
         let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;

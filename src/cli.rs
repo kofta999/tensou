@@ -129,6 +129,26 @@ pub async fn run() -> anyhow::Result<()> {
 
             while let Ok(event) = rx.recv().await {
                 match event {
+                    DaemonEvent::ConsentRequested {
+                        peer,
+                        job_name,
+                        reply_tx,
+                    } => {
+                        println!("\nIncoming transfer from {}!", peer);
+
+                        let accepted = dialoguer::Confirm::new()
+                            .with_prompt(format!(
+                                // "Accept '{}' ({} bytes across {} files)?",
+                                "Accept '{}'?",
+                                job_name, //total_bytes, file_count
+                            ))
+                            .interact()
+                            .unwrap_or(false);
+
+                        if let Some(tx) = reply_tx.lock().expect("Poisoned mutex").take() {
+                            let _ = tx.send(accepted);
+                        }
+                    }
                     DaemonEvent::TransferStarted {
                         transfer_id,
                         total_bytes,
