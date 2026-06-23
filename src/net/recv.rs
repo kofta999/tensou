@@ -1,13 +1,10 @@
 use crate::{
     CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     disk::{IgnitionPayload, ReceiveSession},
-    protocol::{ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferEvent},
+    protocol::{ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferEventSender},
 };
 use std::{collections::HashMap, path::Path, sync::Arc};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::broadcast,
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub(super) struct PendingTransfer {
     pub(super) connection: quinn::Connection,
@@ -32,7 +29,7 @@ impl PendingTransfer {
     pub async fn accept(
         mut self,
         target_dir: &Path,
-        event_tx: Option<broadcast::Sender<TransferEvent>>,
+        event_tx: Option<TransferEventSender>,
         transfer_id: u32,
     ) -> anyhow::Result<Receiver> {
         self.send_stream.write_u8(1).await?;

@@ -38,14 +38,12 @@ pub struct ChunkHeader {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChunkPacket {
-    pub file_id: FileId,
-    pub index: u64,
-    // Optimizes serializing of u8 arrays (50% size reduction)
-    #[serde(with = "serde_bytes")]
-    pub hash: [u8; 32],
-    #[serde(with = "serde_bytes")]
+    pub header: ChunkHeader,
     pub bytes: Vec<u8>,
 }
+
+pub type ChunkPacketSender = tokio::sync::mpsc::Sender<ChunkPacket>;
+pub type ChunkPacketReceiver = tokio::sync::mpsc::Receiver<ChunkPacket>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State(pub BitVec<u8, Lsb0>);
@@ -213,3 +211,5 @@ pub enum TransferEvent {
     /// Fired when the final file is committed
     TransferComplete { transfer_id: u32 },
 }
+
+pub type TransferEventSender = tokio::sync::broadcast::Sender<TransferEvent>;

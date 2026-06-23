@@ -1,3 +1,7 @@
+use crate::protocol::{
+    ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
+    State, TransferEvent, TransferEventSender,
+};
 use std::{
     fs::{self},
     path::{Path, PathBuf},
@@ -6,10 +10,7 @@ use std::{
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
-    sync::{broadcast, mpsc},
 };
-
-use crate::protocol::{ChunkHeader, ChunkPacket, JobInstruction, Metadata, State, TransferEvent};
 
 pub struct SendSession {
     metadata: Metadata,
@@ -91,8 +92,8 @@ pub struct DiskWriter {
     is_resumed: bool,
     file: Option<File>,
     transfer_id: u32,
-    rx: mpsc::Receiver<ChunkPacket>,
-    event_tx: Option<broadcast::Sender<TransferEvent>>,
+    rx: ChunkPacketReceiver,
+    event_tx: Option<TransferEventSender>,
 }
 
 impl DiskWriter {
@@ -166,9 +167,9 @@ impl DiskWriter {
         Ok(())
     }
 
-    fn allocate_sparse_file(path: &PathBuf, size: u64) -> anyhow::Result<()> {
-        let file = fs::File::create(&path)?;
-        file.set_len(size as u64)?;
+    async fn allocate_sparse_file(path: &PathBuf, size: u64) -> anyhow::Result<()> {
+        let file = tokio::fs::File::create(&path).await?;
+        file.set_len(size).await?;
         Ok(())
     }
 
@@ -178,11 +179,11 @@ impl DiskWriter {
     }
 
     pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
-        if packet.hash == Self::hash_chunk(&packet.bytes) {
-            let offset = packet.index * self.metadata.chunk_size;
+        if packet.header.hash == Self::hash_chunk(&packet.bytes) {
+            let offset = packet.header.index * self.metadata.chunk_size;
 
             if !self.is_resumed {
-                Self::allocate_sparse_file(&self.part_file_path, self.metadata.size)?;
+                Self::allocate_sparse_file(&self.part_file_path, self.metadata.size).await?;
                 self.is_resumed = true;
             }
 
@@ -200,7 +201,7 @@ impl DiskWriter {
             file_fd.seek(std::io::SeekFrom::Start(offset)).await?;
             file_fd.write_all(&packet.bytes).await?;
 
-            self.state.0.set(packet.index as usize, true);
+            self.state.0.set(packet.header.index as usize, true);
 
             Ok(true)
         } else {
@@ -235,20 +236,20 @@ impl DiskWriter {
 }
 
 pub struct IgnitionPayload {
-    pub rx: mpsc::Receiver<ChunkPacket>,
+    pub rx: ChunkPacketReceiver,
     pub ins: JobInstruction,
     pub target_path: PathBuf,
     pub transfer_id: u32,
-    pub event_tx: Option<tokio::sync::broadcast::Sender<TransferEvent>>,
+    pub event_tx: Option<TransferEventSender>,
 }
 
 pub struct ReceiveSession {
-    tx: mpsc::Sender<ChunkPacket>,
+    tx: ChunkPacketSender,
     ignition: Mutex<Option<IgnitionPayload>>,
 }
 
 impl ReceiveSession {
-    pub fn new(tx: mpsc::Sender<ChunkPacket>, ignition: IgnitionPayload) -> Self {
+    pub fn new(tx: ChunkPacketSender, ignition: IgnitionPayload) -> Self {
         Self {
             tx,
             ignition: Mutex::new(Some(ignition)),
@@ -269,14 +270,7 @@ impl ReceiveSession {
             });
         }
 
-        self.tx
-            .send(ChunkPacket {
-                file_id: header.file_id,
-                index: header.index,
-                hash: header.hash,
-                bytes,
-            })
-            .await?;
+        self.tx.send(ChunkPacket { header, bytes }).await?;
         Ok(())
     }
 }
