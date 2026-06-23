@@ -1,8 +1,7 @@
 use crate::{
-    MAX_QUIC_CHUNK_SIZE,
     discovery::{self, DiscoveredDevice},
     net::{AppDaemon, Sender},
-    protocol::DaemonEvent,
+    protocol::TransferEvent,
 };
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -98,7 +97,7 @@ pub async fn run() -> anyhow::Result<()> {
 
             let pb = create_transfer_pb(total_bytes, "", true);
 
-            let (tx, mut rx) = mpsc::channel::<u64>(MAX_QUIC_CHUNK_SIZE);
+            let (tx, mut rx) = mpsc::channel::<u64>(100);
 
             let transfer_handle =
                 tokio::spawn(async move { client.process_chunks(Some(tx)).await });
@@ -115,7 +114,7 @@ pub async fn run() -> anyhow::Result<()> {
             let target_dir = resolve_save_directory(output)?;
             let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
-            let (tx, mut rx) = tokio::sync::broadcast::channel::<DaemonEvent>(MAX_QUIC_CHUNK_SIZE);
+            let (tx, mut rx) = tokio::sync::broadcast::channel::<TransferEvent>(100);
 
             let daemon = AppDaemon::new(bind_addr, Some(tx))?;
 
@@ -129,7 +128,7 @@ pub async fn run() -> anyhow::Result<()> {
 
             while let Ok(event) = rx.recv().await {
                 match event {
-                    DaemonEvent::ConsentRequested {
+                    TransferEvent::ConsentRequested {
                         peer,
                         job_name,
                         reply_tx,
@@ -149,7 +148,7 @@ pub async fn run() -> anyhow::Result<()> {
                             let _ = tx.send(accepted);
                         }
                     }
-                    DaemonEvent::TransferStarted {
+                    TransferEvent::TransferStarted {
                         transfer_id,
                         total_bytes,
                         job_name,
@@ -159,12 +158,12 @@ pub async fn run() -> anyhow::Result<()> {
                             multi_progress.add(create_transfer_pb(total_bytes, &job_name, false));
                         active_bars.insert(transfer_id, pb);
                     }
-                    DaemonEvent::ChunkReceived { transfer_id, bytes } => {
+                    TransferEvent::ChunkReceived { transfer_id, bytes } => {
                         if let Some(pb) = active_bars.get(&transfer_id) {
                             pb.inc(bytes);
                         }
                     }
-                    DaemonEvent::TransferComplete { transfer_id } => {
+                    TransferEvent::TransferComplete { transfer_id } => {
                         if let Some(pb) = active_bars.remove(&transfer_id) {
                             pb.set_style(
                                 pb.style()

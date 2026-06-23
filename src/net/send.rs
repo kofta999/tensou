@@ -6,7 +6,10 @@ use crate::{
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
-use tokio::{io::AsyncReadExt, sync::mpsc};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+};
 
 pub struct Sender {
     connection: quinn::Connection,
@@ -84,15 +87,24 @@ impl Sender {
                 // To capture ownership and drop on task finish (to decrease semaphore count)
                 let _permit = permit;
 
-                let chunk = session_clone.get_chunk(chunk_id).await?;
-                let buf = rmp_serde::to_vec(&chunk)?;
+                let (header, buf) = session_clone.get_chunk(chunk_id).await?;
+                let buf_len = buf.len() as u64;
+
+                // Very lightweight
+                let header_bytes = rmp_serde::to_vec(&header)?;
+                let header_len = header_bytes.len() as u32;
+
+                stream.write_u32(header_len).await?;
+                stream.write_all(&header_bytes).await?;
 
                 stream.write_all(&buf).await?;
+                drop(buf);
+
                 stream.finish()?;
 
                 if let Some(tx) = tx_clone {
                     // No need to throw errors on progress reports
-                    let _ = tx.send(chunk.bytes.len() as u64).await;
+                    let _ = tx.send(buf_len).await;
                 }
 
                 anyhow::Ok(())

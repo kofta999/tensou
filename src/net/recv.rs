@@ -1,10 +1,13 @@
 use crate::{
-    FileId, MAX_METADATA_SIZE, MAX_QUIC_CHUNK_SIZE,
-    disk::ReceiveSession,
-    protocol::{ChunkPacket, DaemonEvent, Manifest, ManifestManager},
+    CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
+    disk::{IgnitionPayload, ReceiveSession},
+    protocol::{ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferEvent},
 };
 use std::{collections::HashMap, path::Path, sync::Arc};
-use tokio::{io::AsyncWriteExt, sync::broadcast};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::broadcast,
+};
 
 pub(super) struct PendingTransfer {
     pub(super) connection: quinn::Connection,
@@ -26,24 +29,57 @@ impl PendingTransfer {
         })
     }
 
-    pub async fn accept(mut self, target_dir: &Path) -> anyhow::Result<Receiver> {
+    pub async fn accept(
+        mut self,
+        target_dir: &Path,
+        event_tx: Option<broadcast::Sender<TransferEvent>>,
+        transfer_id: u32,
+    ) -> anyhow::Result<Receiver> {
         self.send_stream.write_u8(1).await?;
 
         let job_name = self.manifest.job_name.clone();
         let target_path = target_dir.join(&self.manifest.job_name);
-        let (states, sessions, total_size) = tokio::task::spawn_blocking(move || {
-            ManifestManager::parse(self.manifest, &target_path)
+        let target_path_clone = target_path.clone();
+
+        let instructions = tokio::task::spawn_blocking(move || {
+            ManifestManager::parse(self.manifest, &target_path_clone)
         })
         .await??;
+
+        let (total_remaining_size, states) =
+            instructions
+                .iter()
+                .fold((0, Vec::new()), |(total, mut states), ins| {
+                    states.push(&ins.state);
+                    (total + ins.remaining_bytes, states)
+                });
 
         let state_buf = rmp_serde::to_vec(&states)?;
 
         self.send_stream.write_all(&state_buf).await?;
         self.send_stream.finish()?;
 
+        let mut sessions = HashMap::new();
+
+        for ins in instructions.into_iter() {
+            // TODO: change that 2
+            let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(2);
+            let file_id = ins.metadata.file_id;
+
+            let payload = IgnitionPayload {
+                ins,
+                event_tx: event_tx.clone(),
+                target_path: target_path.clone(),
+                rx,
+                transfer_id,
+            };
+
+            sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
+        }
+
         Ok(Receiver {
             connection: self.connection,
-            total_size,
+            total_size: total_remaining_size,
             job_name,
             sessions: Arc::new(sessions),
         })
@@ -62,16 +98,13 @@ pub struct Receiver {
     pub(super) connection: quinn::Connection,
     pub(super) total_size: u64,
     pub(super) job_name: String,
-    pub(super) sessions: Arc<HashMap<FileId, Arc<tokio::sync::Mutex<ReceiveSession>>>>,
+    pub(super) sessions: Arc<HashMap<FileId, Arc<ReceiveSession>>>,
 }
 
 impl Receiver {
-    pub async fn process_chunks(
-        self,
-        progress_tx: Option<broadcast::Sender<DaemonEvent>>,
-        transfer_id: u32,
-    ) -> anyhow::Result<()> {
+    pub async fn process_chunks(self) -> anyhow::Result<()> {
         let mut join_set = tokio::task::JoinSet::new();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));
 
         let mut recv = self.connection.accept_uni().await?;
         let buf = recv.read_to_end(64).await?;
@@ -80,48 +113,25 @@ impl Receiver {
         for _ in 0..chunk_count {
             let mut chunk_stream = self.connection.accept_uni().await?;
             let sessions_clone = self.sessions.clone();
-            let tx_clone = progress_tx.clone();
+            let permit = semaphore.clone().acquire_owned().await?;
 
             join_set.spawn(async move {
                 if let Err(e) = async {
-                    let start = std::time::Instant::now();
-                    let buf = chunk_stream.read_to_end(MAX_QUIC_CHUNK_SIZE).await?;
-                    let net_time = start.elapsed();
+                    // To capture ownership and drop on task finish (to decrease semaphore count)
+                    let _permit = permit;
 
-                    let chunk: ChunkPacket = rmp_serde::from_slice(&buf)?;
-                    let size = chunk.bytes.len();
-                    let idx = chunk.index;
+                    let header_len = chunk_stream.read_u32().await?;
+                    let mut header_buf = vec![0u8; header_len as usize];
+                    chunk_stream.read_exact(&mut header_buf).await?;
+                    let header: ChunkHeader = rmp_serde::from_slice(&header_buf)?;
 
-                    let start_lock = std::time::Instant::now();
-                    let mut session = sessions_clone
-                        .get(&chunk.file_id)
-                        .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?
-                        .lock()
-                        .await;
-                    let lock_wait_time = start_lock.elapsed();
+                    let data_buf = chunk_stream.read_to_end(CHUNK_SIZE as usize).await?;
 
-                    let start_write = std::time::Instant::now();
-                    session.write_chunk(chunk).await?;
-                    let write_time = start_write.elapsed();
+                    let session = sessions_clone
+                        .get(&header.file_id)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?;
 
-                    if session.is_complete() {
-                        session.commit()?;
-                    }
-
-                    if lock_wait_time > std::time::Duration::from_millis(50) {
-                        println!(
-                            "Chunk {} statistics: Net read: {:?}, Lock wait: {:?}, Disk write: {:?}",
-                            idx, net_time, lock_wait_time, write_time
-                        );
-                    }
-
-
-                    if let Some(tx) = tx_clone {
-                        let _ = tx.send(DaemonEvent::ChunkReceived {
-                            transfer_id,
-                            bytes: size as u64,
-                        })?;
-                    }
+                    session.write_chunk(header, data_buf).await?;
 
                     anyhow::Ok(())
                 }
@@ -139,10 +149,6 @@ impl Receiver {
         }
 
         self.connection.close(0u32.into(), b"Transfer Complete");
-
-        if let Some(tx) = progress_tx {
-            let _ = tx.send(DaemonEvent::TransferComplete { transfer_id });
-        }
 
         anyhow::Ok(())
     }

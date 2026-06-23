@@ -1,13 +1,11 @@
-use crate::{
-    CHUNK_SIZE,
-    disk::{ReceiveSession, SendSession},
-};
+use crate::{CHUNK_SIZE, disk::SendSession};
 use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
-use bitvec::{order::Lsb0, vec::BitVec};
+use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    fs,
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
@@ -31,6 +29,14 @@ pub struct Metadata {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ChunkHeader {
+    pub file_id: FileId,
+    pub index: u64,
+    #[serde(with = "serde_bytes")]
+    pub hash: [u8; 32],
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ChunkPacket {
     pub file_id: FileId,
     pub index: u64,
@@ -44,22 +50,83 @@ pub struct ChunkPacket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State(pub BitVec<u8, Lsb0>);
 
+pub struct JobInstruction {
+    pub metadata: Metadata,
+    pub is_resumed: bool,
+    pub state: State,
+    pub remaining_bytes: u64,
+}
+
+impl JobInstruction {
+    pub(crate) fn new(metadata: Metadata, target_path: &Path) -> anyhow::Result<Self> {
+        let total_chunks: usize =
+            ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
+        let mut is_resumed = false;
+
+        let base_path = if metadata.relative_path.is_empty() {
+            target_path.to_path_buf()
+        } else {
+            target_path.join(Path::new(&metadata.relative_path))
+        };
+
+        let mut state_file_path = base_path.clone();
+        state_file_path.add_extension("state");
+
+        if let Some(parent) = state_file_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let state = if state_file_path.exists() {
+            let state_bytes = fs::read(&state_file_path)?;
+
+            let mut bitvec: BitVec<u8, Lsb0> = BitVec::from_vec(state_bytes);
+            bitvec.truncate(total_chunks);
+
+            is_resumed = true;
+
+            State(bitvec)
+        } else {
+            let state = State(bitvec![u8, Lsb0; 0; total_chunks]);
+            fs::write(&state_file_path, state.0.as_raw_slice())?;
+
+            state
+        };
+
+        Ok(Self {
+            remaining_bytes: Self::get_remaining_size(&state, &metadata),
+            is_resumed,
+            metadata,
+            state,
+        })
+    }
+
+    fn get_remaining_size(state: &State, metadata: &Metadata) -> u64 {
+        let mut total = 0;
+        for idx in 0..state.0.len() {
+            if let Some(val) = state.0.get(idx) {
+                if !*val {
+                    let offset = idx as u64 * metadata.chunk_size;
+                    let diff = metadata.size - offset;
+                    let size = if diff < metadata.chunk_size {
+                        diff
+                    } else {
+                        metadata.chunk_size
+                    };
+                    total += size;
+                }
+            }
+        }
+        total
+    }
+}
+
 pub struct ManifestManager;
 
 impl ManifestManager {
-    pub fn parse(
-        manifest: Manifest,
-        target_path: &Path,
-    ) -> anyhow::Result<(
-        Vec<State>,
-        HashMap<FileId, Arc<tokio::sync::Mutex<ReceiveSession>>>,
-        u64,
-    )> {
-        let mut sessions = HashMap::new();
-        let mut states = Vec::new();
-        let mut remaining_bytes = 0;
+    pub fn parse(manifest: Manifest, target_path: &Path) -> anyhow::Result<Vec<JobInstruction>> {
+        let mut instructions = Vec::new();
 
-        for (i, metadata) in manifest.files.into_iter().enumerate() {
+        for metadata in manifest.files.into_iter() {
             if !is_safe_relative_path(Path::new(&metadata.relative_path)) {
                 bail!("Invalid path")
             }
@@ -74,13 +141,11 @@ impl ManifestManager {
                 std::fs::create_dir_all(parent)?;
             }
 
-            let session = ReceiveSession::new(metadata, target_path)?;
-            states.push(session.get_state());
-            remaining_bytes += session.get_remaining_size();
-            sessions.insert(i, Arc::new(tokio::sync::Mutex::new(session)));
+            let instruction = JobInstruction::new(metadata, target_path)?;
+            instructions.push(instruction);
         }
 
-        Ok((states, sessions, remaining_bytes))
+        Ok(instructions)
     }
 
     pub fn build(path: &Path) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
@@ -95,7 +160,7 @@ impl ManifestManager {
         {
             let metadata = Metadata {
                 file_id: i,
-                chunk_size: CHUNK_SIZE,
+                chunk_size: CHUNK_SIZE.into(),
                 relative_path: entry
                     .path()
                     .strip_prefix(path)?
@@ -126,7 +191,7 @@ impl ManifestManager {
 }
 
 #[derive(Debug, Clone)]
-pub enum DaemonEvent {
+pub enum TransferEvent {
     /// Fired when a sender connects and sends the Manifest
     ConsentRequested {
         peer: SocketAddr,

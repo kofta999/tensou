@@ -1,8 +1,8 @@
 use crate::MAX_CONCURRENT_STREAMS;
 use crate::net::recv::PendingTransfer;
-use crate::{discovery, protocol::DaemonEvent};
+use crate::{discovery, protocol::TransferEvent};
 use mdns_sd::ServiceDaemon;
-use quinn::{Endpoint, ServerConfig};
+use quinn::{Endpoint, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
     net::SocketAddr,
@@ -19,14 +19,14 @@ pub use send::Sender;
 // Server listener
 pub struct AppDaemon {
     endpoint: quinn::Endpoint,
-    event_tx: Option<broadcast::Sender<DaemonEvent>>,
+    event_tx: Option<broadcast::Sender<TransferEvent>>,
     _discovery_daemon: ServiceDaemon,
 }
 
 impl AppDaemon {
     pub fn new(
         bind_addr: SocketAddr,
-        event_tx: Option<broadcast::Sender<DaemonEvent>>,
+        event_tx: Option<broadcast::Sender<TransferEvent>>,
     ) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
 
@@ -44,51 +44,82 @@ impl AppDaemon {
 
     // TODO: target_dir will be replaced by a Config struct later
     pub async fn run(&self, target_dir: PathBuf) {
-        // Waiting for connections, similar to HTTP servers
+        use tokio::task::JoinSet;
+        use tokio::time::{Duration, timeout};
+
+        let mut active_transfers = JoinSet::new();
+
         while let Some(incoming) = self.endpoint.accept().await {
             let target_dir_clone = target_dir.clone();
             let event_tx_clone = self.event_tx.clone();
             let transfer_id = rand::random::<u32>();
 
-            tokio::spawn(async move {
-                // Get the actual connection
-                let connection = incoming.await?;
+            while active_transfers.try_join_next().is_some() {}
+
+            active_transfers.spawn(async move {
+                let connection = match timeout(Duration::from_secs(5), incoming).await {
+                    Ok(Ok(conn)) => conn,
+                    Ok(Err(e)) => {
+                        eprintln!("Quinn connection establishment failed: {e}");
+                        return anyhow::Ok(());
+                    }
+                    Err(_) => {
+                        eprintln!("Connection handshake timed out.");
+                        return anyhow::Ok(());
+                    }
+                };
+
                 let peer = connection.remote_address();
 
-                if let Ok(pending) = PendingTransfer::read_manifest(connection).await {
-                    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-
-                    if let Some(ref tx) = event_tx_clone {
-                        tx.send(DaemonEvent::ConsentRequested {
-                            peer,
-                            job_name: pending.manifest.job_name.to_string(),
-                            reply_tx: Arc::new(Mutex::new(Some(reply_tx))),
-                        })?;
-                    }
-
-                    let is_accepted = reply_rx.await.unwrap_or(false);
-
-                    if is_accepted {
-                        let transfer_job = pending.accept(&target_dir_clone).await?;
+                match timeout(
+                    Duration::from_secs(10),
+                    PendingTransfer::read_manifest(connection),
+                )
+                .await
+                {
+                    Ok(Ok(pending)) => {
+                        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
 
                         if let Some(ref tx) = event_tx_clone {
-                            let _ = tx.send(DaemonEvent::TransferStarted {
-                                transfer_id,
+                            let _ = tx.send(TransferEvent::ConsentRequested {
                                 peer,
-                                total_bytes: transfer_job.total_size,
-                                job_name: transfer_job.job_name.to_string(),
+                                job_name: pending.manifest.job_name.to_string(),
+                                reply_tx: Arc::new(Mutex::new(Some(reply_tx))),
                             });
                         }
 
-                        transfer_job
-                            .process_chunks(event_tx_clone, transfer_id)
-                            .await?;
-                    } else {
-                        println!("Transfer from {} was rejected.", peer);
-                        pending.reject().await?;
+                        let is_accepted = reply_rx.await.unwrap_or(false);
+
+                        if is_accepted {
+                            let transfer_job = pending
+                                .accept(&target_dir_clone, event_tx_clone.clone(), transfer_id)
+                                .await?;
+
+                            if let Some(ref tx) = event_tx_clone {
+                                let _ = tx.send(TransferEvent::TransferStarted {
+                                    transfer_id,
+                                    peer,
+                                    total_bytes: transfer_job.total_size,
+                                    job_name: transfer_job.job_name.to_string(),
+                                });
+                            }
+
+                            transfer_job.process_chunks().await?;
+
+                            if let Some(ref tx) = event_tx_clone {
+                                let _ = tx.send(TransferEvent::TransferComplete { transfer_id });
+                            }
+                        } else {
+                            println!("Transfer from {} was rejected.", peer);
+                            pending.reject().await?;
+                        }
                     }
-                } else {
-                    eprintln!("Handshake failed!");
+                    Ok(Err(e)) => {
+                        eprintln!("Handshake manifest read failed! {e}");
+                    }
+                    Err(_) => {
+                        eprintln!("Timed out waiting for manifest from {peer}");
+                    }
                 };
 
                 anyhow::Ok(())
@@ -101,12 +132,14 @@ impl AppDaemon {
         let cert_der = CertificateDer::from(cert.cert);
         let priv_key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
 
+        let mut transport_config = TransportConfig::default();
+        transport_config.max_concurrent_uni_streams(MAX_CONCURRENT_STREAMS.into());
+        transport_config.stream_receive_window(VarInt::from_u32(5 * 1024 * 1024));
+        transport_config.receive_window(VarInt::from_u32(64 * 1024 * 1024));
+
         let mut server_config =
             ServerConfig::with_single_cert(vec![cert_der.clone()], priv_key.into())?;
-        let transport_config = Arc::get_mut(&mut server_config.transport)
-            .ok_or(anyhow::anyhow!("Couldn't access transport config"))?;
-
-        transport_config.max_concurrent_uni_streams(MAX_CONCURRENT_STREAMS.into());
+        server_config.transport = Arc::new(transport_config);
 
         Ok(server_config)
     }
