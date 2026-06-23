@@ -5,6 +5,15 @@ pub const MAX_METADATA_SIZE: u64 = 64 * 1024 * 1024;
 pub const MAX_CONCURRENT_STREAMS: u16 = 8;
 pub const SERVICE_TYPE: &str = "_tensou._udp.local.";
 
+// According to the robot:
+// This tells the sender "you can have up to 8 MB of unacknowledged data in flight." On a LAN with ~0.1ms RTT, you only need:
+// bandwidth × RTT = 125 MB/s × 0.0001s = 12.5 KB
+// Even with some headroom, 8-16 MB is more than enough for any LAN.
+pub const QUIC_RECEIVE_WINDOW: u32 = 8 * 1024 * 1024;
+
+// 5 MB (CHUNK_SIZE + extra 1 MB for headers etc)
+pub const QUIC_STREAM_RECEIVE_WINDOW: u32 = 5 * 1024 * 1024;
+
 pub type FileId = usize;
 pub type ChunkIndex = u64;
 

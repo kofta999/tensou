@@ -1,15 +1,15 @@
-use crate::MAX_CONCURRENT_STREAMS;
 use crate::net::recv::PendingTransfer;
+use crate::protocol::TransferEventSender;
+use crate::{MAX_CONCURRENT_STREAMS, QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW};
 use crate::{discovery, protocol::TransferEvent};
 use mdns_sd::ServiceDaemon;
-use quinn::{Endpoint, ServerConfig, TransportConfig, VarInt};
+use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::sync::broadcast;
 
 mod recv;
 mod send;
@@ -19,14 +19,14 @@ pub use send::Sender;
 // Server listener
 pub struct AppDaemon {
     endpoint: quinn::Endpoint,
-    event_tx: Option<broadcast::Sender<TransferEvent>>,
+    event_tx: Option<TransferEventSender>,
     _discovery_daemon: ServiceDaemon,
 }
 
 impl AppDaemon {
     pub fn new(
         bind_addr: SocketAddr,
-        event_tx: Option<broadcast::Sender<TransferEvent>>,
+        event_tx: Option<TransferEventSender>,
     ) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
 
@@ -134,8 +134,8 @@ impl AppDaemon {
 
         let mut transport_config = TransportConfig::default();
         transport_config.max_concurrent_uni_streams(MAX_CONCURRENT_STREAMS.into());
-        transport_config.stream_receive_window(VarInt::from_u32(5 * 1024 * 1024));
-        transport_config.receive_window(VarInt::from_u32(64 * 1024 * 1024));
+        transport_config.stream_receive_window(QUIC_STREAM_RECEIVE_WINDOW.into());
+        transport_config.receive_window(QUIC_RECEIVE_WINDOW.into());
 
         let mut server_config =
             ServerConfig::with_single_cert(vec![cert_der.clone()], priv_key.into())?;
