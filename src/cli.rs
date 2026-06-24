@@ -107,10 +107,10 @@ impl TransferObserver for CliReceiveTransfer {
     }
 }
 
-struct CliConcent;
+struct CliConsent;
 
 #[async_trait]
-impl TransferConsentHandler for CliConcent {
+impl TransferConsentHandler for CliConsent {
     async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
         println!("\nIncoming transfer from {}!", peer);
         dialoguer::Confirm::new()
@@ -158,6 +158,7 @@ pub async fn run() -> anyhow::Result<()> {
                 }
             };
 
+            println!("Connecting to {}...", selected_addr);
             let client = Sender::connect(selected_addr, &path).await?;
             let total_bytes = client.get_remaining_bytes();
 
@@ -178,7 +179,7 @@ pub async fn run() -> anyhow::Result<()> {
 
             let daemon = AppDaemon::new(
                 bind_addr,
-                Arc::new(CliConcent {}),
+                Arc::new(CliConsent {}),
                 Arc::new(CliReceiveTransfer {
                     multi_progress: indicatif::MultiProgress::new(),
                     active: Mutex::new(HashMap::new()),

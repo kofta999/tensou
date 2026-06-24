@@ -39,18 +39,12 @@ impl SendSession {
     }
 
     pub fn get_chunk_size(&self, index: u64) -> u64 {
-        let offset = index * self.metadata.chunk_size;
-        let diff = self.metadata.size - offset;
-        if diff < self.metadata.chunk_size {
-            diff
-        } else {
-            self.metadata.chunk_size
-        }
+        self.metadata.get_chunk_size(index)
     }
 
     pub async fn get_chunk(&self, index: u64) -> anyhow::Result<(ChunkHeader, Vec<u8>)> {
         let offset = index * self.metadata.chunk_size;
-        let mut buf = self.get_read_buffer(offset);
+        let mut buf = self.get_read_buffer(index);
 
         let mut fd = File::open(&self.full_path).await?;
         fd.seek(std::io::SeekFrom::Start(offset)).await?;
@@ -60,26 +54,14 @@ impl SendSession {
             ChunkHeader {
                 file_id: self.metadata.file_id,
                 index,
-                hash: Self::hash_chunk(&buf),
+                hash: ChunkHeader::hash_chunk(&buf),
             },
             buf,
         ))
     }
 
-    fn get_read_buffer(&self, offset: u64) -> Vec<u8> {
-        let diff = self.metadata.size - offset;
-
-        let size = if diff < self.metadata.chunk_size {
-            diff
-        } else {
-            self.metadata.chunk_size
-        };
-
-        vec![0u8; size as usize]
-    }
-
-    fn hash_chunk(chunk: &[u8]) -> [u8; 32] {
-        blake3::hash(chunk).into()
+    fn get_read_buffer(&self, index: u64) -> Vec<u8> {
+        vec![0u8; self.metadata.get_chunk_size(index) as usize]
     }
 }
 
@@ -107,11 +89,7 @@ impl DiskWriter {
             observer,
         }: IgnitionPayload,
     ) -> anyhow::Result<Self> {
-        let base_path = if ins.metadata.relative_path.is_empty() {
-            target_path.to_path_buf()
-        } else {
-            target_path.join(Path::new(&ins.metadata.relative_path))
-        };
+        let base_path = ins.metadata.resolve_path(&target_path);
 
         let mut state_file_path = base_path.clone();
         state_file_path.add_extension("state");
@@ -175,7 +153,7 @@ impl DiskWriter {
     }
 
     pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
-        if packet.header.hash == Self::hash_chunk(&packet.bytes) {
+        if packet.header.hash == ChunkHeader::hash_chunk(&packet.bytes) {
             let offset = packet.header.index * self.metadata.chunk_size;
 
             if !self.is_resumed {
@@ -215,19 +193,11 @@ impl DiskWriter {
 
         fs::remove_file(&self.state_file_path)?;
 
-        let dest_path = if self.metadata.relative_path.is_empty() {
-            self.target_path.clone()
-        } else {
-            self.target_path.join(&self.metadata.relative_path)
-        };
+        let dest_path = self.metadata.resolve_path(Path::new(&self.target_path));
 
         fs::rename(&self.part_file_path, dest_path)?;
 
         Ok(())
-    }
-
-    fn hash_chunk(chunk: &[u8]) -> [u8; 32] {
-        blake3::hash(chunk).into()
     }
 }
 

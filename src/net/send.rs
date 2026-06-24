@@ -23,7 +23,6 @@ impl Sender {
         let mut endpoint = Endpoint::client(bind_addr)?;
         endpoint.set_default_client_config(client_cfg);
 
-        println!("Connecting to {}...", server_addr);
         let connection = endpoint.connect(server_addr, "localhost")?.await?;
 
         let (mut send, mut recv) = connection.open_bi().await?;
@@ -70,7 +69,10 @@ impl Sender {
 
         for (file_id, chunk_id) in task_list {
             let permit = semaphore.clone().acquire_owned().await?;
-            let session = self.sessions.get(&file_id).expect("shouldn't happen");
+            let session = self
+                .sessions
+                .get(&file_id)
+                .expect("file_id from flatten() missing in sessions");
             let session_clone = session.clone();
             let conn_clone = self.connection.clone();
             let observer_clone = observer.clone();
@@ -120,7 +122,7 @@ impl Sender {
                     .remote_states
                     .get(*file_id)
                     .and_then(|s| s.0.get(chunk_idx))
-                    .is_some_and(|v| v == true)
+                    .is_some_and(|v| *v)
                 {
                     continue;
                 }

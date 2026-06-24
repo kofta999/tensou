@@ -3,6 +3,7 @@ use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
 use walkdir::WalkDir;
 
@@ -21,12 +22,38 @@ pub struct Metadata {
     pub chunk_size: u64,
 }
 
+impl Metadata {
+    pub fn get_chunk_size(&self, index: u64) -> u64 {
+        let offset = index * self.chunk_size;
+        let diff = self.size - offset;
+        if diff < self.chunk_size {
+            diff
+        } else {
+            self.chunk_size
+        }
+    }
+
+    pub fn resolve_path(&self, base: &Path) -> PathBuf {
+        if self.relative_path.is_empty() {
+            base.to_path_buf()
+        } else {
+            base.join(&self.relative_path)
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChunkHeader {
     pub file_id: FileId,
     pub index: u64,
     #[serde(with = "serde_bytes")]
     pub hash: [u8; 32],
+}
+
+impl ChunkHeader {
+    pub fn hash_chunk(chunk: &[u8]) -> [u8; 32] {
+        blake3::hash(chunk).into()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,11 +81,7 @@ impl JobInstruction {
             ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
         let mut is_resumed = false;
 
-        let base_path = if metadata.relative_path.is_empty() {
-            target_path.to_path_buf()
-        } else {
-            target_path.join(Path::new(&metadata.relative_path))
-        };
+        let base_path = metadata.resolve_path(target_path);
 
         let mut state_file_path = base_path.clone();
         state_file_path.add_extension("state");
@@ -96,14 +119,7 @@ impl JobInstruction {
         for idx in 0..state.0.len() {
             if let Some(val) = state.0.get(idx) {
                 if !*val {
-                    let offset = idx as u64 * metadata.chunk_size;
-                    let diff = metadata.size - offset;
-                    let size = if diff < metadata.chunk_size {
-                        diff
-                    } else {
-                        metadata.chunk_size
-                    };
-                    total += size;
+                    total += metadata.get_chunk_size(idx as u64);
                 }
             }
         }
@@ -122,11 +138,7 @@ impl ManifestManager {
                 bail!("Invalid path")
             }
 
-            let full_path = if metadata.relative_path.is_empty() {
-                target_path.to_path_buf()
-            } else {
-                target_path.join(&metadata.relative_path)
-            };
+            let full_path = metadata.resolve_path(target_path);
 
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;
