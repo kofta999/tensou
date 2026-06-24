@@ -275,77 +275,61 @@ impl ReceiveSession {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::{CHUNK_SIZE, protocol::JobInstruction};
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
 
-//     use super::*;
-//     use rand::Rng;
-//     use tempfile::tempdir;
+    use crate::{CHUNK_SIZE, protocol::JobInstruction};
 
-//     #[tokio::test]
-//     async fn test_full_local_transfer() -> anyhow::Result<()> {
-//         // 1. Setup: Create a temporary directory
-//         let source_dir = tempdir()?;
-//         let dest_dir = tempdir()?;
-//         let source_path = source_dir.path().join("source.bin");
-//         let received_dir = dest_dir.path();
+    use super::*;
+    use rand::Rng;
+    use tempfile::tempdir;
+    use tokio::sync::mpsc;
 
-//         // 2. Mock Data: Create a file with exactly 10MB of random data
-//         // (Write logic to fill `source_path` with 10MB of bytes)
-//         let mut buffer = vec![0u8; 10 * 1024 * 1024];
-//         rand::rng().fill_bytes(&mut buffer);
-//         fs::write(&source_path, &buffer)?;
+    #[tokio::test]
+    async fn test_full_local_transfer() -> anyhow::Result<()> {
+        let source_dir = tempdir()?;
+        let dest_dir = tempdir()?;
+        let source_path = source_dir.path().join("source.bin");
+        let received_dir = dest_dir.path();
 
-//         let metadata = Metadata {
-//             file_id: 0,
-//             relative_path: "source.bin".to_string(),
-//             size: 10 * 1024 * 1024,
-//             chunk_size: CHUNK_SIZE,
-//         };
-//         let send_session = SendSession::new(metadata, &source_path)?;
+        let mut buffer = vec![0u8; 10 * 1024 * 1024];
+        rand::rng().fill_bytes(&mut buffer);
+        fs::write(&source_path, &buffer)?;
 
-//         // 4. Initialize: Create your ReceiveSession and DiskWriter using the sender's metadata
-//         let (tx, rx) = mpsc::channel::<ChunkPacket>(10);
-//         let receive_session = ReceiveSession::new(tx);
+        let metadata = Metadata {
+            file_id: 0,
+            relative_path: "source.bin".to_string(),
+            size: 10 * 1024 * 1024,
+            chunk_size: CHUNK_SIZE as u64,
+        };
+        let send_session = SendSession::new(metadata, &source_path)?;
 
-//         let instruction = JobInstruction::new(send_session.get_metadata(), &received_dir)?;
+        let (tx, rx) = mpsc::channel::<ChunkPacket>(10);
+        let instruction = JobInstruction::new(send_session.get_metadata(), &received_dir)?;
 
-//         let mut writer = DiskWriter::new(
-//             instruction.state,
-//             instruction.metadata,
-//             &received_dir,
-//             instruction.is_resumed,
-//             0,
-//             rx,
-//             None,
-//         )?;
+        let ignition = IgnitionPayload {
+            ins: instruction,
+            event_tx: None,
+            rx,
+            transfer_id: 0,
+            target_path: received_dir.to_path_buf(),
+        };
+        let receive_session = ReceiveSession::new(tx, ignition);
 
-//         let writer_handle = tokio::spawn(async move { writer.run().await });
+        for i in 0..send_session.get_total_chunks() {
+            let (header, bytes) = send_session.get_chunk(i as u64).await?;
+            receive_session.write_chunk(header, bytes).await?;
+        }
 
-//         // 5. The Loop:
-//         // Iterate through the total number of chunks.
-//         // For each chunk: get_chunk from sender -> write_chunk to receiver.
+        // Wait until disk finishes
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-//         for i in 0..send_session.get_total_chunks() {
-//             let chunk = send_session.get_chunk(i as u64).await?;
-//             receive_session.write_chunk(chunk).await?;
-//         }
+        assert!(file_diff::diff(
+            source_path.to_str().unwrap(),
+            received_dir.join("source.bin").to_str().unwrap()
+        ));
 
-//         // 6. The Commit:
-//         // Drop the receive session to close the channel, and await the disk writer to finish writing.
-//         drop(receive_session);
-//         writer_handle.await??;
-
-//         // 7. The Final Verification:
-//         // Read `source.bin` and the final received file into memory.
-//         // Assert that they are exactly equal.
-
-//         assert!(file_diff::diff(
-//             source_path.to_str().unwrap(),
-//             received_dir.join("source.bin").to_str().unwrap()
-//         ));
-
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}

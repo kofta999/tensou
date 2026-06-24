@@ -2,24 +2,27 @@ use crate::net::recv::PendingTransfer;
 use crate::protocol::TransferEventSender;
 use crate::{MAX_CONCURRENT_STREAMS, QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW};
 use crate::{discovery, protocol::TransferEvent};
+use async_trait::async_trait;
 use mdns_sd::ServiceDaemon;
 use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 mod recv;
 mod send;
 pub use recv::Receiver;
 pub use send::Sender;
 
+#[async_trait]
+pub trait TransferConsentHandler: Send + Sync {
+    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool;
+}
+
 // Server listener
 pub struct AppDaemon {
     endpoint: quinn::Endpoint,
     event_tx: Option<TransferEventSender>,
+    consent: Arc<dyn TransferConsentHandler>,
     _discovery_daemon: ServiceDaemon,
 }
 
@@ -27,6 +30,7 @@ impl AppDaemon {
     pub fn new(
         bind_addr: SocketAddr,
         event_tx: Option<TransferEventSender>,
+        consent: Arc<dyn TransferConsentHandler>,
     ) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
 
@@ -39,6 +43,7 @@ impl AppDaemon {
             endpoint,
             event_tx,
             _discovery_daemon,
+            consent,
         })
     }
 
@@ -53,6 +58,7 @@ impl AppDaemon {
             let target_dir_clone = target_dir.clone();
             let event_tx_clone = self.event_tx.clone();
             let transfer_id = rand::random::<u32>();
+            let consent_clone = self.consent.clone();
 
             while active_transfers.try_join_next().is_some() {}
 
@@ -78,17 +84,9 @@ impl AppDaemon {
                 .await
                 {
                     Ok(Ok(pending)) => {
-                        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-
-                        if let Some(ref tx) = event_tx_clone {
-                            let _ = tx.send(TransferEvent::ConsentRequested {
-                                peer,
-                                job_name: pending.manifest.job_name.to_string(),
-                                reply_tx: Arc::new(Mutex::new(Some(reply_tx))),
-                            });
-                        }
-
-                        let is_accepted = reply_rx.await.unwrap_or(false);
+                        let is_accepted = consent_clone
+                            .request_consent(peer, &pending.manifest.job_name)
+                            .await;
 
                         if is_accepted {
                             let transfer_job = pending
@@ -152,30 +150,33 @@ mod tests {
     use tempfile::tempdir;
     use tokio::time::Duration;
 
+    struct AutoAccept;
+
+    #[async_trait]
+    impl TransferConsentHandler for AutoAccept {
+        async fn request_consent(&self, _peer: SocketAddr, _job_name: &str) -> bool {
+            true
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_full_network_transfer() -> anyhow::Result<()> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .expect("Failed to install crypto provider");
 
-        // 1. Setup: Create a temporary directory
         let source_dir = tempdir()?;
         let dest_dir = tempdir()?;
         let source_path = source_dir.path().join("source.bin");
         let received_dir = dest_dir.path().to_path_buf();
 
-        // 2. Mock Data: Generate a 10MB test file at `source_path`
         let mut buffer = vec![0u8; 10 * 1024 * 1024];
         rand::rng().fill_bytes(&mut buffer);
         std::fs::write(&source_path, &buffer)?;
 
-        // 3. Server Setup: Bind to port 0 (OS assigns a random free port)
-        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?, None)?;
-
-        // Grab the actual port the OS assigned us so the client knows where to dial
+        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?, None, Arc::new(AutoAccept {}))?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
 
-        // 4. Start the Server Daemon in the background
         let target_path_clone = received_dir.clone();
         let server_handle = tokio::spawn(async move {
             app_daemon.run(target_path_clone).await;

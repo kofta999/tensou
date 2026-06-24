@@ -1,14 +1,16 @@
 use crate::{
     discovery::{self, DiscoveredDevice},
-    net::{AppDaemon, Sender},
-    protocol::TransferEvent,
+    net::{AppDaemon, Sender, TransferConsentHandler},
+    protocol::{TransferEvent, TransferEventSender},
 };
+use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
+    sync::{Arc, Mutex},
 };
 use tokio::{
     io::{self, AsyncBufReadExt},
@@ -116,7 +118,11 @@ pub async fn run() -> anyhow::Result<()> {
 
             let (tx, mut rx) = tokio::sync::broadcast::channel::<TransferEvent>(100);
 
-            let daemon = AppDaemon::new(bind_addr, Some(tx))?;
+            let daemon = AppDaemon::new(
+                bind_addr,
+                Some(tx.clone()),
+                Arc::new(InteractiveConsent { event_tx: tx }),
+            )?;
 
             tokio::spawn(async move {
                 daemon.run(target_dir).await;
@@ -179,6 +185,25 @@ pub async fn run() -> anyhow::Result<()> {
 
             Ok(())
         }
+    }
+}
+
+struct InteractiveConsent {
+    event_tx: TransferEventSender,
+}
+
+#[async_trait]
+impl TransferConsentHandler for InteractiveConsent {
+    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+
+        let _ = self.event_tx.send(TransferEvent::ConsentRequested {
+            peer,
+            job_name: job_name.to_string(),
+            reply_tx: Arc::new(Mutex::new(Some(reply_tx))),
+        });
+
+        reply_rx.await.unwrap_or(false)
     }
 }
 
