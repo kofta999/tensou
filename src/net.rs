@@ -1,7 +1,7 @@
+use crate::discovery;
 use crate::net::recv::PendingTransfer;
-use crate::protocol::TransferEventSender;
+use crate::protocol::TransferObserver;
 use crate::{MAX_CONCURRENT_STREAMS, QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW};
-use crate::{discovery, protocol::TransferEvent};
 use async_trait::async_trait;
 use mdns_sd::ServiceDaemon;
 use quinn::{Endpoint, ServerConfig, TransportConfig};
@@ -21,16 +21,16 @@ pub trait TransferConsentHandler: Send + Sync {
 // Server listener
 pub struct AppDaemon {
     endpoint: quinn::Endpoint,
-    event_tx: Option<TransferEventSender>,
     consent: Arc<dyn TransferConsentHandler>,
+    observer: Arc<dyn TransferObserver>,
     _discovery_daemon: ServiceDaemon,
 }
 
 impl AppDaemon {
     pub fn new(
         bind_addr: SocketAddr,
-        event_tx: Option<TransferEventSender>,
         consent: Arc<dyn TransferConsentHandler>,
+        observer: Arc<dyn TransferObserver>,
     ) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
 
@@ -41,9 +41,9 @@ impl AppDaemon {
 
         Ok(Self {
             endpoint,
-            event_tx,
-            _discovery_daemon,
+            observer,
             consent,
+            _discovery_daemon,
         })
     }
 
@@ -56,7 +56,7 @@ impl AppDaemon {
 
         while let Some(incoming) = self.endpoint.accept().await {
             let target_dir_clone = target_dir.clone();
-            let event_tx_clone = self.event_tx.clone();
+            let observer_clone = self.observer.clone();
             let transfer_id = rand::random::<u32>();
             let consent_clone = self.consent.clone();
 
@@ -90,23 +90,19 @@ impl AppDaemon {
 
                         if is_accepted {
                             let transfer_job = pending
-                                .accept(&target_dir_clone, event_tx_clone.clone(), transfer_id)
+                                .accept(&target_dir_clone, observer_clone.clone(), transfer_id)
                                 .await?;
 
-                            if let Some(ref tx) = event_tx_clone {
-                                let _ = tx.send(TransferEvent::TransferStarted {
-                                    transfer_id,
-                                    peer,
-                                    total_bytes: transfer_job.total_size,
-                                    job_name: transfer_job.job_name.to_string(),
-                                });
-                            }
+                            observer_clone.on_transfer_started(
+                                transfer_id,
+                                peer,
+                                transfer_job.total_size,
+                                &transfer_job.job_name,
+                            );
 
                             transfer_job.process_chunks().await?;
 
-                            if let Some(ref tx) = event_tx_clone {
-                                let _ = tx.send(TransferEvent::TransferComplete { transfer_id });
-                            }
+                            observer_clone.on_transfer_complete(transfer_id);
                         } else {
                             println!("Transfer from {} was rejected.", peer);
                             pending.reject().await?;
@@ -159,6 +155,9 @@ mod tests {
         }
     }
 
+    struct TestObserver;
+    impl TransferObserver for TestObserver {}
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_full_network_transfer() -> anyhow::Result<()> {
         rustls::crypto::ring::default_provider()
@@ -174,7 +173,11 @@ mod tests {
         rand::rng().fill_bytes(&mut buffer);
         std::fs::write(&source_path, &buffer)?;
 
-        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?, None, Arc::new(AutoAccept {}))?;
+        let app_daemon = AppDaemon::new(
+            "127.0.0.1:0".parse()?,
+            Arc::new(AutoAccept {}),
+            Arc::new(TestObserver),
+        )?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
 
         let target_path_clone = received_dir.clone();
@@ -186,7 +189,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let client = Sender::connect(bound_server_addr, &source_path).await?;
-        client.process_chunks(None).await?;
+        client.process_chunks(Arc::new(TestObserver {})).await?;
 
         // Give the server a tiny moment to flush the final commit() to disk
         tokio::time::sleep(Duration::from_millis(100)).await;

@@ -27,3 +27,4 @@ mod protocol;
 pub fn is_safe_relative_path(path: &Path) -> bool {
     path.components().all(|c| matches!(c, Component::Normal(_)))
 }
+

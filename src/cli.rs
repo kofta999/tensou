@@ -1,11 +1,11 @@
 use crate::{
     discovery::{self, DiscoveredDevice},
     net::{AppDaemon, Sender, TransferConsentHandler},
-    protocol::{TransferEvent, TransferEventSender},
+    protocol::TransferObserver,
 };
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -45,7 +45,7 @@ pub enum Commands {
     },
 }
 
-pub fn resolve_save_directory(user_provided_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+fn resolve_save_directory(user_provided_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     if let Some(path) = user_provided_path {
         std::fs::create_dir_all(&path)?;
         return Ok(path.canonicalize()?);
@@ -58,6 +58,70 @@ pub fn resolve_save_directory(user_provided_path: Option<PathBuf>) -> anyhow::Re
 
     std::fs::create_dir_all(&tensou_dir)?;
     Ok(tensou_dir.canonicalize()?)
+}
+
+struct CliSendTransfer(ProgressBar);
+
+impl TransferObserver for CliSendTransfer {
+    fn on_chunk_transferred(&self, _: Option<u32>, bytes: u64) {
+        self.0.inc(bytes);
+    }
+}
+
+struct CliReceiveTransfer {
+    multi_progress: MultiProgress,
+    active: Mutex<HashMap<u32, ProgressBar>>,
+}
+
+impl TransferObserver for CliReceiveTransfer {
+    fn on_transfer_started(
+        &self,
+        transfer_id: u32,
+        _peer: SocketAddr,
+        total_bytes: u64,
+        job_name: &str,
+    ) {
+        let pb = self
+            .multi_progress
+            .add(create_transfer_pb(total_bytes, &job_name, false));
+        self.active.lock().unwrap().insert(transfer_id, pb);
+    }
+
+    fn on_chunk_transferred(&self, transfer_id: Option<u32>, bytes: u64) {
+        let active = self.active.lock().unwrap();
+        if let Some(pb) = transfer_id.and_then(|v| active.get(&v)) {
+            pb.inc(bytes);
+        }
+    }
+
+    fn on_transfer_complete(&self, transfer_id: u32) {
+        if let Some(pb) = self.active.lock().unwrap().remove(&transfer_id) {
+            pb.set_style(
+                pb.style()
+                    .clone()
+                    .template("{spinner:.green} {msg:.green} [{elapsed_precise}] ✔ Completed!")
+                    .expect("Invalid style"),
+            );
+            pb.finish_with_message("Done!");
+        }
+    }
+}
+
+struct CliConcent;
+
+#[async_trait]
+impl TransferConsentHandler for CliConcent {
+    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
+        println!("\nIncoming transfer from {}!", peer);
+        dialoguer::Confirm::new()
+            .with_prompt(format!(
+                // "Accept '{}' ({} bytes across {} files)?",
+                "Accept '{}'?",
+                job_name, //total_bytes, file_count
+            ))
+            .interact()
+            .unwrap_or(false)
+    }
 }
 
 pub async fn run() -> anyhow::Result<()> {
@@ -99,14 +163,10 @@ pub async fn run() -> anyhow::Result<()> {
 
             let pb = create_transfer_pb(total_bytes, "", true);
 
-            let (tx, mut rx) = mpsc::channel::<u64>(100);
-
             let transfer_handle =
-                tokio::spawn(async move { client.process_chunks(Some(tx)).await });
-
-            while let Some(bytes_sent) = rx.recv().await {
-                pb.inc(bytes_sent);
-            }
+                tokio::spawn(
+                    async move { client.process_chunks(Arc::new(CliSendTransfer(pb))).await },
+                );
 
             transfer_handle.await??;
 
@@ -116,94 +176,19 @@ pub async fn run() -> anyhow::Result<()> {
             let target_dir = resolve_save_directory(output)?;
             let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
-            let (tx, mut rx) = tokio::sync::broadcast::channel::<TransferEvent>(100);
-
             let daemon = AppDaemon::new(
                 bind_addr,
-                Some(tx.clone()),
-                Arc::new(InteractiveConsent { event_tx: tx }),
+                Arc::new(CliConcent {}),
+                Arc::new(CliReceiveTransfer {
+                    multi_progress: indicatif::MultiProgress::new(),
+                    active: Mutex::new(HashMap::new()),
+                }),
             )?;
 
-            tokio::spawn(async move {
-                daemon.run(target_dir).await;
-            });
-
-            let multi_progress = indicatif::MultiProgress::new();
-            let mut active_bars: std::collections::HashMap<u32, indicatif::ProgressBar> =
-                HashMap::new();
-
-            while let Ok(event) = rx.recv().await {
-                match event {
-                    TransferEvent::ConsentRequested {
-                        peer,
-                        job_name,
-                        reply_tx,
-                    } => {
-                        println!("\nIncoming transfer from {}!", peer);
-
-                        let accepted = dialoguer::Confirm::new()
-                            .with_prompt(format!(
-                                // "Accept '{}' ({} bytes across {} files)?",
-                                "Accept '{}'?",
-                                job_name, //total_bytes, file_count
-                            ))
-                            .interact()
-                            .unwrap_or(false);
-
-                        if let Some(tx) = reply_tx.lock().expect("Poisoned mutex").take() {
-                            let _ = tx.send(accepted);
-                        }
-                    }
-                    TransferEvent::TransferStarted {
-                        transfer_id,
-                        total_bytes,
-                        job_name,
-                        ..
-                    } => {
-                        let pb =
-                            multi_progress.add(create_transfer_pb(total_bytes, &job_name, false));
-                        active_bars.insert(transfer_id, pb);
-                    }
-                    TransferEvent::ChunkReceived { transfer_id, bytes } => {
-                        if let Some(pb) = active_bars.get(&transfer_id) {
-                            pb.inc(bytes);
-                        }
-                    }
-                    TransferEvent::TransferComplete { transfer_id } => {
-                        if let Some(pb) = active_bars.remove(&transfer_id) {
-                            pb.set_style(
-                                pb.style()
-                                    .clone()
-                                    .template("{spinner:.green} {msg:.green} [{elapsed_precise}] ✔ Completed!")
-                                    .expect("Invalid style")
-                            );
-                            pb.finish_with_message("Done!");
-                        }
-                    }
-                }
-            }
+            daemon.run(target_dir).await;
 
             Ok(())
         }
-    }
-}
-
-struct InteractiveConsent {
-    event_tx: TransferEventSender,
-}
-
-#[async_trait]
-impl TransferConsentHandler for InteractiveConsent {
-    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-
-        let _ = self.event_tx.send(TransferEvent::ConsentRequested {
-            peer,
-            job_name: job_name.to_string(),
-            reply_tx: Arc::new(Mutex::new(Some(reply_tx))),
-        });
-
-        reply_rx.await.unwrap_or(false)
     }
 }
 

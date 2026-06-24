@@ -1,11 +1,11 @@
 use crate::protocol::{
     ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
-    State, TransferEvent, TransferEventSender,
+    State, TransferObserver,
 };
 use std::{
     fs::{self},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 use tokio::{
     fs::File,
@@ -93,7 +93,7 @@ pub struct DiskWriter {
     file: Option<File>,
     transfer_id: u32,
     rx: ChunkPacketReceiver,
-    event_tx: Option<TransferEventSender>,
+    observer: Arc<dyn TransferObserver>,
 }
 
 impl DiskWriter {
@@ -104,7 +104,7 @@ impl DiskWriter {
             ins,
             target_path,
             transfer_id,
-            event_tx,
+            observer,
         }: IgnitionPayload,
     ) -> anyhow::Result<Self> {
         let base_path = if ins.metadata.relative_path.is_empty() {
@@ -128,7 +128,7 @@ impl DiskWriter {
             file: None,
             transfer_id,
             rx,
-            event_tx,
+            observer,
         })
     }
 
@@ -142,12 +142,8 @@ impl DiskWriter {
             self.write_chunk(packet).await?;
             chunks_since_save += 1;
 
-            if let Some(ref tx) = self.event_tx {
-                let _ = tx.send(TransferEvent::ChunkReceived {
-                    transfer_id: self.transfer_id,
-                    bytes: size,
-                });
-            }
+            self.observer
+                .on_chunk_transferred(Some(self.transfer_id), size);
 
             if self.is_complete() {
                 self.commit()?;
@@ -240,7 +236,7 @@ pub struct IgnitionPayload {
     pub ins: JobInstruction,
     pub target_path: PathBuf,
     pub transfer_id: u32,
-    pub event_tx: Option<TransferEventSender>,
+    pub observer: Arc<dyn TransferObserver>,
 }
 
 pub struct ReceiveSession {
@@ -277,14 +273,15 @@ impl ReceiveSession {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use crate::{CHUNK_SIZE, protocol::JobInstruction};
-
     use super::*;
+    use crate::{CHUNK_SIZE, protocol::JobInstruction};
     use rand::Rng;
+    use std::time::Duration;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
+
+    struct TestObserver;
+    impl TransferObserver for TestObserver {}
 
     #[tokio::test]
     async fn test_full_local_transfer() -> anyhow::Result<()> {
@@ -310,10 +307,10 @@ mod tests {
 
         let ignition = IgnitionPayload {
             ins: instruction,
-            event_tx: None,
             rx,
             transfer_id: 0,
             target_path: received_dir.to_path_buf(),
+            observer: Arc::new(TestObserver {}),
         };
         let receive_session = ReceiveSession::new(tx, ignition);
 

@@ -2,14 +2,11 @@ use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     crypto::SkipServerVerification,
     disk::SendSession,
-    protocol::{ManifestManager, State},
+    protocol::{ManifestManager, State, TransferObserver},
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::mpsc,
-};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct Sender {
     connection: quinn::Connection,
@@ -60,10 +57,7 @@ impl Sender {
         total
     }
 
-    pub async fn process_chunks(
-        self,
-        progress_tx: Option<mpsc::Sender<u64>>,
-    ) -> anyhow::Result<()> {
+    pub async fn process_chunks(self, observer: Arc<dyn TransferObserver>) -> anyhow::Result<()> {
         let task_list = self.flatten();
         let chunk_count = task_list.len();
 
@@ -79,7 +73,7 @@ impl Sender {
             let session = self.sessions.get(&file_id).expect("shouldn't happen");
             let session_clone = session.clone();
             let conn_clone = self.connection.clone();
-            let tx_clone = progress_tx.clone();
+            let observer_clone = observer.clone();
 
             join_set.spawn(async move {
                 let mut stream = conn_clone.clone().open_uni().await?;
@@ -102,10 +96,7 @@ impl Sender {
 
                 stream.finish()?;
 
-                if let Some(tx) = tx_clone {
-                    // No need to throw errors on progress reports
-                    let _ = tx.send(buf_len).await;
-                }
+                observer_clone.on_chunk_transferred(None, buf_len);
 
                 anyhow::Ok(())
             });

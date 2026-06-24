@@ -3,14 +3,7 @@ use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    fs,
-    net::SocketAddr,
-    path::Path,
-    sync::{Arc, Mutex},
-};
-use tokio::sync::oneshot;
+use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
 use walkdir::WalkDir;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -188,28 +181,15 @@ impl ManifestManager {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum TransferEvent {
-    /// Fired when a sender connects and sends the Manifest
-    ConsentRequested {
-        peer: SocketAddr,
-        job_name: String,
-        // total_bytes: u64,
-        // file_count: u64,
-        // Escape hatch for non-clone types with multiple access points
-        reply_tx: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
-    },
-    /// Fired when the receiver accepts the transfer
-    TransferStarted {
-        transfer_id: u32,
-        peer: SocketAddr,
-        total_bytes: u64,
-        job_name: String,
-    },
-    /// Fired every time a chunk is successfully written to disk
-    ChunkReceived { transfer_id: u32, bytes: u64 },
-    /// Fired when the final file is committed
-    TransferComplete { transfer_id: u32 },
+pub trait TransferObserver: Send + Sync {
+    fn on_transfer_started(
+        &self,
+        _transfer_id: u32,
+        _peer: SocketAddr,
+        _total_bytes: u64,
+        _job_name: &str,
+    ) {
+    }
+    fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {}
+    fn on_transfer_complete(&self, _transfer_id: u32) {}
 }
-
-pub type TransferEventSender = tokio::sync::broadcast::Sender<TransferEvent>;

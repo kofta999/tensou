@@ -1,7 +1,7 @@
 use crate::{
     CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     disk::{IgnitionPayload, ReceiveSession},
-    protocol::{ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferEventSender},
+    protocol::{ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferObserver},
 };
 use std::{collections::HashMap, path::Path, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -29,7 +29,7 @@ impl PendingTransfer {
     pub async fn accept(
         mut self,
         target_dir: &Path,
-        event_tx: Option<TransferEventSender>,
+        observer: Arc<dyn TransferObserver>,
         transfer_id: u32,
     ) -> anyhow::Result<Receiver> {
         self.send_stream.write_u8(1).await?;
@@ -65,7 +65,7 @@ impl PendingTransfer {
 
             let payload = IgnitionPayload {
                 ins,
-                event_tx: event_tx.clone(),
+                observer: observer.clone(),
                 target_path: target_path.clone(),
                 rx,
                 transfer_id,
