@@ -1,6 +1,7 @@
 use crate::{CHUNK_SIZE, disk::SendSession};
 use crate::{FileId, is_safe_relative_path};
 use anyhow::bail;
+use async_trait::async_trait;
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -229,4 +230,9 @@ pub trait TransferObserver: Send + Sync {
     }
     fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {}
     fn on_transfer_complete(&self, _transfer_id: u32) {}
+}
+
+#[async_trait]
+pub trait TransferConsentHandler: Send + Sync {
+    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool;
 }

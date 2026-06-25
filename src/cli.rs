@@ -2,8 +2,8 @@ use crate::{
     SERVER_PORT,
     config::Config,
     discovery::{self, DiscoveredDevice},
-    net::{ReceiverDaemon, Sender, TransferConsentHandler},
-    protocol::TransferObserver,
+    net::{ReceiverDaemon, Sender},
+    protocol::{TransferConsentHandler, TransferObserver},
 };
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};

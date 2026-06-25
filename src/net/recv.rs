@@ -1,13 +1,172 @@
 use crate::{
-    CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
+    CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE, QUIC_RECEIVE_WINDOW,
+    QUIC_STREAM_RECEIVE_WINDOW,
+    config::Config,
+    discovery,
     disk::{IgnitionPayload, ReceiveSession},
     protocol::{
-        ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferObserver, find_unique_path,
+        ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferConsentHandler,
+        TransferObserver, find_unique_path,
     },
 };
-use std::{collections::HashMap, path::Path, sync::Arc};
+use mdns_sd::ServiceDaemon;
+use quinn::{Endpoint, ServerConfig, TransportConfig};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
+
+// Server listener
+pub struct ReceiverDaemon {
+    pub(super) endpoint: quinn::Endpoint,
+    pub(super) config: Config,
+    pub(super) _discovery_daemon: ServiceDaemon,
+}
+
+impl ReceiverDaemon {
+    pub fn new(bind_addr: SocketAddr, config: Config) -> anyhow::Result<Self> {
+        let server_config = Self::configure_server()?;
+
+        let endpoint = Endpoint::server(server_config, bind_addr)?;
+        let actual_port = endpoint.local_addr()?.port();
+
+        let _discovery_daemon = discovery::register_service(actual_port)?;
+
+        Ok(Self {
+            endpoint,
+            config,
+            _discovery_daemon,
+        })
+    }
+
+    pub fn local_addr(&self) -> anyhow::Result<SocketAddr> {
+        Ok(self.endpoint.local_addr()?)
+    }
+
+    // TODO: target_dir will be replaced by a Config struct later
+    pub async fn run(
+        &self,
+        consent: Arc<dyn TransferConsentHandler>,
+        observer: Arc<dyn TransferObserver>,
+        cancel_token: CancellationToken,
+    ) {
+        use tokio::task::JoinSet;
+        use tokio::time::{Duration, timeout};
+
+        let mut active_transfers = JoinSet::new();
+
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() =>  {
+                    break;
+                }
+
+            incoming = self.endpoint.accept() => {
+                let Some(incoming) = incoming else {break};
+
+                let target_dir_clone = self.config.target_dir.clone();
+                let observer_clone = observer.clone();
+                let transfer_id = rand::random::<u32>();
+                let consent_clone = consent.clone();
+                let cancel_clone = cancel_token.clone();
+                let config_clone = self.config.clone();
+
+                while active_transfers.try_join_next().is_some() {}
+
+                active_transfers.spawn(async move {
+                    let connection = match timeout(Duration::from_secs(5), incoming).await {
+                        Ok(Ok(conn)) => conn,
+                        Ok(Err(e)) => {
+                            eprintln!("Quinn connection establishment failed: {e}");
+                            return anyhow::Ok(());
+                        }
+                        Err(_) => {
+                            eprintln!("Connection handshake timed out.");
+                            return anyhow::Ok(());
+                        }
+                    };
+
+                    let peer = connection.remote_address();
+
+                    match timeout(
+                        Duration::from_secs(10),
+                        PendingTransfer::read_manifest(connection.clone()),
+                    )
+                    .await
+                    {
+                        Ok(Ok(pending)) => {
+                            let is_accepted = consent_clone
+                                .request_consent(peer, &pending.manifest.job_name)
+                                .await;
+
+                            if is_accepted {
+                                let receiver = pending
+                                    .accept(
+                                        &target_dir_clone,
+                                        observer_clone.clone(),
+                                        transfer_id,
+                                        cancel_clone.clone(),
+                                        config_clone.overwrite_dest
+                                    )
+                                    .await?;
+
+                                observer_clone.on_transfer_started(
+                                    transfer_id,
+                                    peer,
+                                    receiver.total_size,
+                                    &receiver.job_name,
+                                );
+
+                                tokio::select! {
+                                    _ = cancel_clone.cancelled() =>  {
+                                        connection.close(0u32.into(),b"Cancelled by receiver");
+                                    }
+
+                                    res = receiver.process_chunks(cancel_clone.clone()) => {
+                                        res?;
+                                        observer_clone.on_transfer_complete(transfer_id);
+                                    }
+                                };
+
+                            } else {
+                                println!("Transfer from {} was rejected.", peer);
+                                pending.reject().await?;
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!("Handshake manifest read failed! {e}");
+                        }
+                        Err(_) => {
+                            eprintln!("Timed out waiting for manifest from {peer}");
+                        }
+                    };
+
+                    anyhow::Ok(())
+                });
+            }}
+        }
+
+        println!("Waiting for active transfers to safely flush to disk...");
+        while let Some(_) = active_transfers.join_next().await {}
+    }
+
+    fn configure_server() -> anyhow::Result<ServerConfig> {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+        let cert_der = CertificateDer::from(cert.cert);
+        let priv_key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
+
+        let mut transport_config = TransportConfig::default();
+        transport_config.max_concurrent_uni_streams(MAX_CONCURRENT_STREAMS.into());
+        transport_config.stream_receive_window(QUIC_STREAM_RECEIVE_WINDOW.into());
+        transport_config.receive_window(QUIC_RECEIVE_WINDOW.into());
+
+        let mut server_config =
+            ServerConfig::with_single_cert(vec![cert_der.clone()], priv_key.into())?;
+        server_config.transport = Arc::new(transport_config);
+
+        Ok(server_config)
+    }
+}
 
 pub(super) struct PendingTransfer {
     pub(super) connection: quinn::Connection,
