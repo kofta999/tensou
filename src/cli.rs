@@ -1,7 +1,8 @@
 use crate::{
     SERVER_PORT,
     config::Config,
-    discovery::{self, DiscoveredDevice},
+    discovery::{self, DiscoveryEvent},
+    gui::state::{ConsentRegistry, GuiConsentHandler, GuiEvent, GuiTransferObserver},
     net::{ReceiverDaemon, Sender},
     protocol::{TransferConsentHandler, TransferObserver},
 };
@@ -24,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 #[command(name = "Tensou")]
 struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -141,7 +142,7 @@ pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { path, ip, port } => {
+        Some(Commands::Send { path, ip, port }) => {
             if !path.exists() {
                 anyhow::bail!("Path '{}' does not exist.", path.display());
             }
@@ -165,7 +166,7 @@ pub async fn run() -> anyhow::Result<()> {
                     spinner.set_message("Scanning for receivers on the local network...");
                     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-                    let (tx, mut rx) = mpsc::channel::<DiscoveredDevice>(10);
+                    let (tx, mut rx) = mpsc::channel::<DiscoveryEvent>(10);
                     tokio::spawn(async move {
                         let _ = discovery::scan_for_receivers(tx).await;
                     });
@@ -175,13 +176,15 @@ pub async fn run() -> anyhow::Result<()> {
 
                     let selected_addr = loop {
                         tokio::select! {
-                            Some(device) = rx.recv() => {
-                                if devices.is_empty() {
-                                    spinner.finish_and_clear();
-                                    println!("Found receivers (type a number to connect):\n");
+                            Some(event) = rx.recv() => {
+                                if let DiscoveryEvent::DeviceFound(device) = event {
+                                    if devices.is_empty() {
+                                        spinner.finish_and_clear();
+                                        println!("Found receivers (type a number to connect):\n");
+                                    }
+                                    devices.push(device.addr);
+                                    println!("  [{}] {} ({})", devices.len(), device.hostname, device.addr);
                                 }
-                                devices.push(device.addr);
-                                println!("  [{}] {} ({})", devices.len(), device.hostname, device.addr);
                             }
 
                             Ok(Some(line)) = stdin.next_line() => {
@@ -235,7 +238,7 @@ pub async fn run() -> anyhow::Result<()> {
 
             Ok(())
         }
-        Commands::Receive { port, output } => {
+        Some(Commands::Receive { port, output }) => {
             let cancel_token = CancellationToken::new();
             let cancel_clone = cancel_token.clone();
 
@@ -274,6 +277,79 @@ pub async fn run() -> anyhow::Result<()> {
                 )
                 .await;
 
+            Ok(())
+        }
+        None => {
+            println!("Launching Tensou GUI...");
+
+            // For detecting devices
+            let (tx, devices_rx) = mpsc::channel::<DiscoveryEvent>(10);
+            tokio::spawn(async move {
+                let _ = discovery::scan_for_receivers(tx).await;
+            });
+
+            // Create channels for GUI events
+            let (event_tx, event_rx) = mpsc::unbounded_channel::<GuiEvent>();
+
+            let consent_registry = Arc::new(ConsentRegistry {
+                pending: Mutex::new(HashMap::new()),
+            });
+
+            let options = eframe::NativeOptions {
+                viewport: eframe::egui::ViewportBuilder::default()
+                    .with_inner_size([850.0, 650.0])
+                    .with_min_inner_size([700.0, 500.0]),
+                ..Default::default()
+            };
+            eframe::run_native(
+                "Tensou",
+                options,
+                Box::new(move |cc| {
+                    let egui_ctx = cc.egui_ctx.clone();
+                    let daemon_event_tx = event_tx.clone();
+                    let daemon_consent_registry = consent_registry.clone();
+                    let ctx_clone = egui_ctx.clone();
+
+                    tokio::spawn(async move {
+                        let target_dir = resolve_save_directory(None).unwrap(); // Default ~/Downloads/Tensou
+                        let bind_addr =
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), SERVER_PORT);
+
+                        if let Ok(daemon) = ReceiverDaemon::new(
+                            bind_addr,
+                            Config {
+                                target_dir,
+                                overwrite_dest: false,
+                            },
+                        ) {
+                            let cancel_token = CancellationToken::new();
+
+                            let observer = Arc::new(GuiTransferObserver {
+                                transfer_id: 0,
+                                tx: daemon_event_tx.clone(),
+                                ctx: ctx_clone.clone(),
+                                is_sender: false,
+                            });
+
+                            let consent_handler = Arc::new(GuiConsentHandler {
+                                registry: daemon_consent_registry,
+                                event_tx: daemon_event_tx.clone(),
+                                ctx: ctx_clone.clone(),
+                            });
+
+                            daemon.run(consent_handler, observer, cancel_token).await;
+                        }
+                    });
+
+                    Ok(Box::new(crate::gui::GuiApp::new(
+                        devices_rx,
+                        event_tx,
+                        event_rx,
+                        consent_registry,
+                    )))
+                }),
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to run eframe: {:?}", e))?;
             Ok(())
         }
     }

@@ -6,8 +6,8 @@ pub use send::Sender;
 
 #[cfg(test)]
 mod tests {
+    use crate::config;
     use crate::protocol::{TransferConsentHandler, TransferObserver};
-    use crate::{SERVER_PORT, config};
     use async_trait::async_trait;
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -44,7 +44,7 @@ mod tests {
         std::fs::write(&source_path, &buffer)?;
 
         let app_daemon = ReceiverDaemon::new(
-            format!("127.0.0.1:{}", SERVER_PORT,).parse()?,
+            "127.0.0.1:0".parse()?,
             config::Config {
                 overwrite_dest: true,
                 target_dir: received_dir.clone(),
@@ -106,7 +106,7 @@ mod tests {
         std::fs::copy(&source_path_2, &source_path_2_named_same)?;
 
         let app_daemon = ReceiverDaemon::new(
-            format!("127.0.0.1:{}", SERVER_PORT,).parse()?,
+            "127.0.0.1:0".parse()?,
             config::Config {
                 overwrite_dest: false,
                 target_dir: received_dir.clone(),

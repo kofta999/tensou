@@ -2,12 +2,21 @@ use crate::SERVICE_TYPE;
 use gethostname::gethostname;
 use mdns_sd::{ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
+    time::Duration,
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time};
 
+#[derive(Debug)]
+pub enum DiscoveryEvent {
+    DeviceFound(DiscoveredDevice),
+    DeviceLost(String),
+}
+
+#[derive(Debug)]
 pub struct DiscoveredDevice {
+    pub fullname: String,
     pub hostname: String,
     pub addr: SocketAddr,
 }
@@ -15,37 +24,71 @@ pub struct DiscoveredDevice {
 pub fn register_service(port: u16) -> anyhow::Result<ServiceDaemon> {
     let daemon = ServiceDaemon::new()?;
     let hostname = gethostname().to_string_lossy().into_owned();
-    let service_name = &hostname;
-    let hostname = format!("{}.local.", &hostname.to_lowercase());
+    let service_name = format!("{}-{}", hostname, port);
+    let hostname_fqdn = format!("{}.local.", &hostname.to_lowercase());
 
     let service_info =
-        ServiceInfo::new(SERVICE_TYPE, service_name, &hostname, "", port, None)?.enable_addr_auto();
+        ServiceInfo::new(SERVICE_TYPE, &service_name, &hostname_fqdn, "", port, None)?
+            .enable_addr_auto();
 
     daemon.register(service_info)?;
 
     Ok(daemon)
 }
 
-pub async fn scan_for_receivers(tx: mpsc::Sender<DiscoveredDevice>) -> anyhow::Result<()> {
+pub async fn scan_for_receivers(tx: mpsc::Sender<DiscoveryEvent>) -> anyhow::Result<()> {
     let daemon = ServiceDaemon::new()?;
     let receiver = daemon.browse(SERVICE_TYPE)?;
 
-    let mut discovered = HashSet::new();
+    let mut discovered_devices: HashMap<String, SocketAddr> = HashMap::new();
 
-    while let Ok(event) = receiver.recv_async().await {
-        if let ServiceEvent::ServiceResolved(info) = event {
-            if let Some(ScopedIp::V4(addr)) = info.get_addresses().iter().find(|ip| ip.is_ipv4()) {
-                let socket_addr = SocketAddr::new(IpAddr::V4(*addr.addr()), info.port);
+    let mut verify_interval = time::interval(Duration::from_secs(10));
+    verify_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
-                if discovered.insert(socket_addr) {
-                    let device = DiscoveredDevice {
-                        hostname: info.get_hostname().to_string(),
-                        addr: socket_addr,
-                    };
+    loop {
+        tokio::select! {
+            _ = verify_interval.tick() => {
+                for fullname in discovered_devices.keys() {
+                    let _ = daemon.verify(fullname.clone(), Duration::from_secs(3));
+                }
+            }
 
-                    if tx.send(device).await.is_err() {
-                        break;
+            Ok(event) = receiver.recv_async() => {
+                match event {
+                    ServiceEvent::ServiceResolved(info) => {
+                        if let Some(ScopedIp::V4(addr)) = info.get_addresses().iter().find(|ip| ip.is_ipv4()) {
+                            let socket_addr = SocketAddr::new(IpAddr::V4(*addr.addr()), info.port);
+                            let fullname = info.get_fullname().to_string();
+
+                            let is_new_or_changed = match discovered_devices.get(&fullname) {
+                                Some(&existing_addr) => existing_addr != socket_addr,
+                                None => true,
+                            };
+
+                            if is_new_or_changed {
+                                discovered_devices.insert(fullname.clone(), socket_addr);
+
+                                let device = DiscoveredDevice {
+                                    hostname: info.get_hostname().to_string(),
+                                    fullname,
+                                    addr: socket_addr,
+                                };
+
+                                if tx.send(DiscoveryEvent::DeviceFound(device)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
                     }
+
+                    ServiceEvent::ServiceRemoved(_, fullname) => {
+                        if discovered_devices.remove(&fullname).is_some() {
+                            if tx.send(DiscoveryEvent::DeviceLost(fullname)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    _ => (),
                 }
             }
         }
@@ -84,7 +127,7 @@ mod tests {
         let start = std::time::Instant::now();
         let mut found = false;
         while start.elapsed() < Duration::from_secs(3) {
-            if let Ok(Some(device)) =
+            if let Ok(Some(DiscoveryEvent::DeviceFound(device))) =
                 tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
             {
                 println!("Found device: {} at {}", device.hostname, device.addr);
