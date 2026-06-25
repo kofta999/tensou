@@ -1,7 +1,8 @@
 use crate::{
     SERVER_PORT,
+    config::Config,
     discovery::{self, DiscoveredDevice},
-    net::{AppDaemon, Sender, TransferConsentHandler},
+    net::{ReceiverDaemon, Sender, TransferConsentHandler},
     protocol::TransferObserver,
 };
 use async_trait::async_trait;
@@ -250,7 +251,13 @@ pub async fn run() -> anyhow::Result<()> {
             let target_dir = resolve_save_directory(output)?;
             let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
-            let daemon = AppDaemon::new(bind_addr)?;
+            let daemon = ReceiverDaemon::new(
+                bind_addr,
+                Config {
+                    target_dir: target_dir.clone(),
+                    overwrite_dest: false,
+                },
+            )?;
 
             println!("Listening on port {}", daemon.local_addr()?.port());
             println!("Saving files to: {}", target_dir.display());
@@ -258,7 +265,6 @@ pub async fn run() -> anyhow::Result<()> {
 
             daemon
                 .run(
-                    target_dir,
                     Arc::new(CliConsent),
                     Arc::new(CliReceiveTransfer {
                         multi_progress: MultiProgress::new(),

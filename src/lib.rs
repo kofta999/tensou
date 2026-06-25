@@ -19,6 +19,7 @@ pub type FileId = usize;
 pub type ChunkIndex = u64;
 
 pub mod cli;
+pub mod config;
 pub mod crypto;
 pub mod discovery;
 pub mod disk;

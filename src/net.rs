@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::discovery;
 use crate::net::recv::PendingTransfer;
 use crate::protocol::TransferObserver;
@@ -6,7 +7,7 @@ use async_trait::async_trait;
 use mdns_sd::ServiceDaemon;
 use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 mod recv;
@@ -20,13 +21,14 @@ pub trait TransferConsentHandler: Send + Sync {
 }
 
 // Server listener
-pub struct AppDaemon {
+pub struct ReceiverDaemon {
     endpoint: quinn::Endpoint,
+    config: Config,
     _discovery_daemon: ServiceDaemon,
 }
 
-impl AppDaemon {
-    pub fn new(bind_addr: SocketAddr) -> anyhow::Result<Self> {
+impl ReceiverDaemon {
+    pub fn new(bind_addr: SocketAddr, config: Config) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
 
         let endpoint = Endpoint::server(server_config, bind_addr)?;
@@ -36,6 +38,7 @@ impl AppDaemon {
 
         Ok(Self {
             endpoint,
+            config,
             _discovery_daemon,
         })
     }
@@ -47,7 +50,6 @@ impl AppDaemon {
     // TODO: target_dir will be replaced by a Config struct later
     pub async fn run(
         &self,
-        target_dir: PathBuf,
         consent: Arc<dyn TransferConsentHandler>,
         observer: Arc<dyn TransferObserver>,
         cancel_token: CancellationToken,
@@ -66,11 +68,12 @@ impl AppDaemon {
             incoming = self.endpoint.accept() => {
                 let Some(incoming) = incoming else {break};
 
-                let target_dir_clone = target_dir.clone();
+                let target_dir_clone = self.config.target_dir.clone();
                 let observer_clone = observer.clone();
                 let transfer_id = rand::random::<u32>();
                 let consent_clone = consent.clone();
                 let cancel_clone = cancel_token.clone();
+                let config_clone = self.config.clone();
 
                 while active_transfers.try_join_next().is_some() {}
 
@@ -107,8 +110,7 @@ impl AppDaemon {
                                         observer_clone.clone(),
                                         transfer_id,
                                         cancel_clone.clone(),
-                                        false
-                                        // self.conoverwrite
+                                        config_clone.overwrite_dest
                                     )
                                     .await?;
 
@@ -172,7 +174,7 @@ impl AppDaemon {
 
 #[cfg(test)]
 mod tests {
-    use crate::SERVER_PORT;
+    use crate::{SERVER_PORT, config};
 
     use super::*;
     use rand::Rng;
@@ -204,14 +206,18 @@ mod tests {
         rand::rng().fill_bytes(&mut buffer);
         std::fs::write(&source_path, &buffer)?;
 
-        let app_daemon = AppDaemon::new(format!("127.0.0.1:{}", SERVER_PORT).parse()?)?;
+        let app_daemon = ReceiverDaemon::new(
+            format!("127.0.0.1:{}", SERVER_PORT,).parse()?,
+            config::Config {
+                overwrite_dest: true,
+                target_dir: received_dir.clone(),
+            },
+        )?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
 
-        let target_path_clone = received_dir.clone();
         let server_handle = tokio::spawn(async move {
             app_daemon
                 .run(
-                    target_path_clone,
                     Arc::new(AutoAccept),
                     Arc::new(TestObserver),
                     CancellationToken::new(),
@@ -262,14 +268,18 @@ mod tests {
         let source_path_2_named_same = source_dir_2.path().join("source.bin");
         std::fs::copy(&source_path_2, &source_path_2_named_same)?;
 
-        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?)?;
+        let app_daemon = ReceiverDaemon::new(
+            format!("127.0.0.1:{}", SERVER_PORT,).parse()?,
+            config::Config {
+                overwrite_dest: false,
+                target_dir: received_dir.clone(),
+            },
+        )?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
 
-        let target_path_clone = received_dir.clone();
         let server_handle = tokio::spawn(async move {
             app_daemon
                 .run(
-                    target_path_clone,
                     Arc::new(AutoAccept),
                     Arc::new(TestObserver),
                     CancellationToken::new(),
