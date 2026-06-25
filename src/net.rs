@@ -145,6 +145,8 @@ impl AppDaemon {
 
 #[cfg(test)]
 mod tests {
+    use crate::SERVER_PORT;
+
     use super::*;
     use rand::Rng;
     use tempfile::tempdir;
@@ -178,8 +180,8 @@ mod tests {
         std::fs::write(&source_path, &buffer)?;
 
         let app_daemon = AppDaemon::new(
-            "127.0.0.1:0".parse()?,
-            Arc::new(AutoAccept {}),
+            format!("127.0.0.1:{}", SERVER_PORT).parse()?,
+            Arc::new(AutoAccept),
             Arc::new(TestObserver),
         )?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;

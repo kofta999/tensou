@@ -1,4 +1,5 @@
 use crate::{
+    SERVER_PORT,
     discovery::{self, DiscoveredDevice},
     net::{AppDaemon, Sender, TransferConsentHandler},
     protocol::TransferObserver,
@@ -31,12 +32,20 @@ pub enum Commands {
         /// The absolute or relative path to the file/folder you want to send
         #[arg(required = true)]
         path: PathBuf,
+
+        /// Optional: Custom IP address to send to directly
+        #[arg(long)]
+        ip: Option<IpAddr>,
+
+        /// Optional: Custom port to associate with the IP
+        #[arg(short, long, default_value_t = SERVER_PORT, requires = "ip")]
+        port: u16,
     },
 
     /// Listen for incoming file transfers
     Receive {
         /// Optional: Force the server to bind to a specific port
-        #[arg(short, long, default_value_t = 0)]
+        #[arg(short, long, default_value_t = SERVER_PORT)]
         port: u16,
 
         /// Optional: Override the default save location
@@ -70,6 +79,7 @@ impl TransferObserver for CliSendTransfer {
 
 struct CliReceiveTransfer {
     multi_progress: MultiProgress,
+    // TODO: Use channels here to avoid Mutex locks
     active: Mutex<HashMap<u32, ProgressBar>>,
 }
 
@@ -129,7 +139,7 @@ pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Send { path } => {
+        Commands::Send { path, ip, port } => {
             if !path.exists() {
                 anyhow::bail!("Path '{}' does not exist.", path.display());
             }
@@ -141,62 +151,69 @@ pub async fn run() -> anyhow::Result<()> {
 
             println!("Preparing to send: {display_name}");
 
-            let spinner = ProgressBar::new_spinner();
-            spinner.set_style(
-                ProgressStyle::default_spinner()
-                    .template("{spinner:.cyan} {msg}")
-                    .unwrap(),
-            );
-            spinner.set_message("Scanning for receivers on the local network...");
-            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+            let selected_addr = match ip {
+                Some(ip) => SocketAddr::new(ip, port),
+                None => {
+                    let spinner = ProgressBar::new_spinner();
+                    spinner.set_style(
+                        ProgressStyle::default_spinner()
+                            .template("{spinner:.cyan} {msg}")
+                            .unwrap(),
+                    );
+                    spinner.set_message("Scanning for receivers on the local network...");
+                    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-            let (tx, mut rx) = mpsc::channel::<DiscoveredDevice>(10);
-            tokio::spawn(async move {
-                let _ = discovery::scan_for_receivers(tx).await;
-            });
+                    let (tx, mut rx) = mpsc::channel::<DiscoveredDevice>(10);
+                    tokio::spawn(async move {
+                        let _ = discovery::scan_for_receivers(tx).await;
+                    });
 
-            let mut devices = Vec::new();
-            let mut stdin = io::BufReader::new(io::stdin()).lines();
+                    let mut devices = Vec::new();
+                    let mut stdin = io::BufReader::new(io::stdin()).lines();
 
-            let selected_addr = loop {
-                tokio::select! {
-                    Some(device) = rx.recv() => {
-                        if devices.is_empty() {
-                            spinner.finish_and_clear();
-                            println!("Found receivers (type a number to connect):\n");
-                        }
-                        devices.push(device.addr);
-                        println!("  [{}] {} ({})", devices.len(), device.hostname, device.addr);
-                    }
-
-                    Ok(Some(line)) = stdin.next_line() => {
-                        let input = line.trim().to_string();
-
-                        if input.is_empty() {
-                            continue;
-                        }
-
-                        if devices.is_empty() {
-                            println!("  No devices found yet, still scanning...");
-                            continue;
-                        }
-
-                        match input.parse::<usize>() {
-                            Ok(index) if index > 0 && index <= devices.len() => {
-                                break devices[index - 1];
+                    let selected_addr = loop {
+                        tokio::select! {
+                            Some(device) = rx.recv() => {
+                                if devices.is_empty() {
+                                    spinner.finish_and_clear();
+                                    println!("Found receivers (type a number to connect):\n");
+                                }
+                                devices.push(device.addr);
+                                println!("  [{}] {} ({})", devices.len(), device.hostname, device.addr);
                             }
-                            Ok(_) => {
-                                println!("  Please enter a number between 1 and {}.", devices.len());
-                            }
-                            Err(_) => {
-                                println!("  Invalid input. Enter a number to select a device.");
+
+                            Ok(Some(line)) = stdin.next_line() => {
+                                let input = line.trim().to_string();
+
+                                if input.is_empty() {
+                                    continue;
+                                }
+
+                                if devices.is_empty() {
+                                    println!("  No devices found yet, still scanning...");
+                                    continue;
+                                }
+
+                                match input.parse::<usize>() {
+                                    Ok(index) if index > 0 && index <= devices.len() => {
+                                        break devices[index - 1];
+                                    }
+                                    Ok(_) => {
+                                        println!("  Please enter a number between 1 and {}.", devices.len());
+                                    }
+                                    Err(_) => {
+                                        println!("  Invalid input. Enter a number to select a device.");
+                                    }
+                                }
                             }
                         }
-                    }
+                    };
+
+                    spinner.finish_and_clear();
+
+                    selected_addr
                 }
             };
-
-            spinner.finish_and_clear();
 
             println!("Connecting to {selected_addr}...");
 
