@@ -112,15 +112,16 @@ struct CliConsent;
 #[async_trait]
 impl TransferConsentHandler for CliConsent {
     async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
-        println!("\nIncoming transfer from {}!", peer);
-        dialoguer::Confirm::new()
-            .with_prompt(format!(
-                // "Accept '{}' ({} bytes across {} files)?",
-                "Accept '{}'?",
-                job_name, //total_bytes, file_count
-            ))
-            .interact()
-            .unwrap_or(false)
+        let job_name = job_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            println!("\nIncoming transfer from {peer}");
+            dialoguer::Confirm::new()
+                .with_prompt(format!("Accept '{job_name}'?"))
+                .interact()
+                .unwrap_or(false)
+        })
+        .await
+        .unwrap_or(false)
     }
 }
 
@@ -129,7 +130,25 @@ pub async fn run() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Send { path } => {
-            println!("Scanning for receivers... (Type a number and press Enter to connect)");
+            if !path.exists() {
+                anyhow::bail!("Path '{}' does not exist.", path.display());
+            }
+
+            let display_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+
+            println!("Preparing to send: {display_name}");
+
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            spinner.set_message("Scanning for receivers on the local network...");
+            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
             let (tx, mut rx) = mpsc::channel::<DiscoveredDevice>(10);
             tokio::spawn(async move {
@@ -142,27 +161,49 @@ pub async fn run() -> anyhow::Result<()> {
             let selected_addr = loop {
                 tokio::select! {
                     Some(device) = rx.recv() => {
+                        if devices.is_empty() {
+                            spinner.finish_and_clear();
+                            println!("Found receivers (type a number to connect):\n");
+                        }
                         devices.push(device.addr);
-                        println!("[{}] {} ({})", devices.len(), device.hostname, device.addr);
+                        println!("  [{}] {} ({})", devices.len(), device.hostname, device.addr);
                     }
 
                     Ok(Some(line)) = stdin.next_line() => {
-                        if let Ok(index) = line.trim().parse::<usize>() {
-                            if index > 0 && index <= devices.len() {
+                        let input = line.trim().to_string();
+
+                        if input.is_empty() {
+                            continue;
+                        }
+
+                        if devices.is_empty() {
+                            println!("  No devices found yet, still scanning...");
+                            continue;
+                        }
+
+                        match input.parse::<usize>() {
+                            Ok(index) if index > 0 && index <= devices.len() => {
                                 break devices[index - 1];
-                            } else {
-                                println!("Invalid selection. Please type a number from the list.");
+                            }
+                            Ok(_) => {
+                                println!("  Please enter a number between 1 and {}.", devices.len());
+                            }
+                            Err(_) => {
+                                println!("  Invalid input. Enter a number to select a device.");
                             }
                         }
                     }
                 }
             };
 
-            println!("Connecting to {}...", selected_addr);
+            spinner.finish_and_clear();
+
+            println!("Connecting to {selected_addr}...");
+
             let client = Sender::connect(selected_addr, &path).await?;
             let total_bytes = client.get_remaining_bytes();
 
-            let pb = create_transfer_pb(total_bytes, "", true);
+            let pb = create_transfer_pb(total_bytes, &display_name, true);
 
             let transfer_handle =
                 tokio::spawn(
@@ -170,6 +211,8 @@ pub async fn run() -> anyhow::Result<()> {
                 );
 
             transfer_handle.await??;
+
+            println!("\nTransfer complete!");
 
             Ok(())
         }
@@ -179,12 +222,16 @@ pub async fn run() -> anyhow::Result<()> {
 
             let daemon = AppDaemon::new(
                 bind_addr,
-                Arc::new(CliConsent {}),
+                Arc::new(CliConsent),
                 Arc::new(CliReceiveTransfer {
-                    multi_progress: indicatif::MultiProgress::new(),
+                    multi_progress: MultiProgress::new(),
                     active: Mutex::new(HashMap::new()),
                 }),
             )?;
+
+            println!("Listening on port {}", daemon.local_addr()?.port());
+            println!("Saving files to: {}", target_dir.display());
+            println!("   Waiting for incoming transfers...\n");
 
             daemon.run(target_dir).await;
 
@@ -193,7 +240,7 @@ pub async fn run() -> anyhow::Result<()> {
     }
 }
 
-pub fn create_transfer_pb(total_bytes: u64, name: &str, is_sender: bool) -> ProgressBar {
+fn create_transfer_pb(total_bytes: u64, name: &str, is_sender: bool) -> ProgressBar {
     let pb = ProgressBar::new(total_bytes);
 
     let style = ProgressStyle::default_bar()
@@ -205,8 +252,10 @@ pub fn create_transfer_pb(total_bytes: u64, name: &str, is_sender: bool) -> Prog
 
     pb.set_style(style);
 
-    if !is_sender {
-        pb.set_message(format!("Receiving: {}", name));
+    let label = if is_sender { "Sending" } else { "Receiving" };
+    if !name.is_empty() {
+        pb.set_message(format!("{label}: {name}"));
     }
+
     pb
 }

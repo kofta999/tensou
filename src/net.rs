@@ -47,6 +47,10 @@ impl AppDaemon {
         })
     }
 
+    pub fn local_addr(&self) -> anyhow::Result<SocketAddr> {
+        Ok(self.endpoint.local_addr()?)
+    }
+
     // TODO: target_dir will be replaced by a Config struct later
     pub async fn run(&self, target_dir: PathBuf) {
         use tokio::task::JoinSet;
