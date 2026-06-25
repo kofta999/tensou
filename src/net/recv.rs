@@ -5,6 +5,7 @@ use crate::{
 };
 use std::{collections::HashMap, path::Path, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
 
 pub(super) struct PendingTransfer {
     pub(super) connection: quinn::Connection,
@@ -31,6 +32,7 @@ impl PendingTransfer {
         target_dir: &Path,
         observer: Arc<dyn TransferObserver>,
         transfer_id: u32,
+        cancel_token: CancellationToken,
     ) -> anyhow::Result<Receiver> {
         self.send_stream.write_u8(1).await?;
 
@@ -69,6 +71,7 @@ impl PendingTransfer {
                 target_path: target_path.clone(),
                 rx,
                 transfer_id,
+                cancel_token: cancel_token.clone(),
             };
 
             sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
@@ -99,7 +102,7 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    pub async fn process_chunks(self) -> anyhow::Result<()> {
+    pub async fn process_chunks(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
         let mut join_set = tokio::task::JoinSet::new();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));
 
@@ -110,6 +113,7 @@ impl Receiver {
         for _ in 0..chunk_count {
             let mut chunk_stream = self.connection.accept_uni().await?;
             let sessions_clone = self.sessions.clone();
+            let cancel_clone = cancel_token.clone();
             let permit = semaphore.clone().acquire_owned().await?;
 
             join_set.spawn(async move {
@@ -134,7 +138,9 @@ impl Receiver {
                 }
                 .await
                 {
-                    eprintln!("Error processing chunk: {:?}", e);
+                    if !cancel_clone.is_cancelled() {
+                        eprintln!("Error processing chunk: {:?}", e);
+                    }
                 };
             });
         }

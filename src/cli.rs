@@ -17,6 +17,7 @@ use tokio::{
     io::{self, AsyncBufReadExt},
     sync::mpsc,
 };
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
 #[command(name = "Tensou")]
@@ -234,23 +235,38 @@ pub async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Receive { port, output } => {
+            let cancel_token = CancellationToken::new();
+            let cancel_clone = cancel_token.clone();
+
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to listen for Ctrl+C");
+                println!("\n[!] Ctrl+C detected! Safely saving transfer states...");
+
+                cancel_clone.cancel();
+            });
+
             let target_dir = resolve_save_directory(output)?;
             let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
-            let daemon = AppDaemon::new(
-                bind_addr,
-                Arc::new(CliConsent),
-                Arc::new(CliReceiveTransfer {
-                    multi_progress: MultiProgress::new(),
-                    active: Mutex::new(HashMap::new()),
-                }),
-            )?;
+            let daemon = AppDaemon::new(bind_addr)?;
 
             println!("Listening on port {}", daemon.local_addr()?.port());
             println!("Saving files to: {}", target_dir.display());
             println!("   Waiting for incoming transfers...\n");
 
-            daemon.run(target_dir).await;
+            daemon
+                .run(
+                    target_dir,
+                    Arc::new(CliConsent),
+                    Arc::new(CliReceiveTransfer {
+                        multi_progress: MultiProgress::new(),
+                        active: Mutex::new(HashMap::new()),
+                    }),
+                    cancel_token,
+                )
+                .await;
 
             Ok(())
         }

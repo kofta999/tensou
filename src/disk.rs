@@ -11,6 +11,7 @@ use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
+use tokio_util::sync::CancellationToken;
 
 pub struct SendSession {
     metadata: Metadata,
@@ -76,6 +77,7 @@ pub struct DiskWriter {
     transfer_id: u32,
     rx: ChunkPacketReceiver,
     observer: Arc<dyn TransferObserver>,
+    cancel_token: CancellationToken,
 }
 
 impl DiskWriter {
@@ -87,6 +89,7 @@ impl DiskWriter {
             target_path,
             transfer_id,
             observer,
+            cancel_token,
         }: IgnitionPayload,
     ) -> anyhow::Result<Self> {
         let base_path = ins.metadata.resolve_path(&target_path);
@@ -107,6 +110,7 @@ impl DiskWriter {
             transfer_id,
             rx,
             observer,
+            cancel_token,
         })
     }
 
@@ -114,23 +118,37 @@ impl DiskWriter {
         let mut chunks_since_save: u32 = 0;
         const SAVE_INTERVAL: u32 = 16;
 
-        while let Some(packet) = self.rx.recv().await {
-            let size = packet.bytes.len() as u64;
+        loop {
+            tokio::select! {
+                _ = self.cancel_token.cancelled() =>  {
+                    self.save_state().await?;
+                    return Ok(())
+                }
 
-            self.write_chunk(packet).await?;
-            chunks_since_save += 1;
+                maybe_packet = self.rx.recv() => {
+                    match maybe_packet {
+                        Some(packet) => {
+                            let size = packet.bytes.len() as u64;
 
-            self.observer
-                .on_chunk_transferred(Some(self.transfer_id), size);
+                            self.write_chunk(packet).await?;
+                            chunks_since_save += 1;
 
-            if self.is_complete() {
-                self.commit()?;
-                break;
-            }
+                            self.observer
+                                .on_chunk_transferred(Some(self.transfer_id), size);
 
-            if chunks_since_save >= SAVE_INTERVAL {
-                self.save_state().await?;
-                chunks_since_save = 0;
+                            if self.is_complete() {
+                                self.commit()?;
+                                break;
+                            }
+
+                            if chunks_since_save >= SAVE_INTERVAL {
+                                self.save_state().await?;
+                                chunks_since_save = 0;
+                            }
+                        }
+                        None => break,
+                    }
+                }
             }
         }
 
@@ -207,6 +225,7 @@ pub struct IgnitionPayload {
     pub target_path: PathBuf,
     pub transfer_id: u32,
     pub observer: Arc<dyn TransferObserver>,
+    pub cancel_token: CancellationToken,
 }
 
 pub struct ReceiveSession {
@@ -236,7 +255,11 @@ impl ReceiveSession {
             });
         }
 
-        self.tx.send(ChunkPacket { header, bytes }).await?;
+        // We've resumes, so it's no problem if we couldn't send a packet once
+        if self.tx.send(ChunkPacket { header, bytes }).await.is_err() {
+            return anyhow::Ok(());
+        };
+
         Ok(())
     }
 }
@@ -281,6 +304,7 @@ mod tests {
             transfer_id: 0,
             target_path: received_dir.to_path_buf(),
             observer: Arc::new(TestObserver {}),
+            cancel_token: CancellationToken::new(),
         };
         let receive_session = ReceiveSession::new(tx, ignition);
 
