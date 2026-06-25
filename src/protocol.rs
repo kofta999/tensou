@@ -42,6 +42,31 @@ impl Metadata {
     }
 }
 
+pub fn find_unique_path(path: &Path) -> PathBuf {
+    let mut p = path.to_path_buf();
+    if !p.exists() {
+        return p;
+    }
+    let base_name = path.file_stem().and_then(|s| s.to_str());
+    let extension = path.extension().and_then(|s| s.to_str());
+
+    if let Some(base_name) = base_name {
+        let mut counter = 1;
+        loop {
+            let candidate = match extension {
+                Some(e) => format!("{base_name} ({counter}).{e}"),
+                None => format!("{base_name} ({counter})"),
+            };
+            p.set_file_name(candidate);
+            if !p.exists() {
+                return p;
+            }
+            counter += 1;
+        }
+    }
+    p
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChunkHeader {
     pub file_id: FileId,
@@ -73,6 +98,7 @@ pub struct JobInstruction {
     pub is_resumed: bool,
     pub state: State,
     pub remaining_bytes: u64,
+    pub full_path: PathBuf,
 }
 
 impl JobInstruction {
@@ -81,10 +107,9 @@ impl JobInstruction {
             ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
         let mut is_resumed = false;
 
-        let base_path = metadata.resolve_path(target_path);
+        let full_path = metadata.resolve_path(target_path);
 
-        let mut state_file_path = base_path.clone();
-        state_file_path.add_extension("state");
+        let state_file_path = full_path.with_added_extension("state");
 
         if let Some(parent) = state_file_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -102,7 +127,6 @@ impl JobInstruction {
         } else {
             let state = State(bitvec![u8, Lsb0; 0; total_chunks]);
             fs::write(&state_file_path, state.0.as_raw_slice())?;
-
             state
         };
 
@@ -111,6 +135,7 @@ impl JobInstruction {
             is_resumed,
             metadata,
             state,
+            full_path,
         })
     }
 

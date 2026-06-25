@@ -107,6 +107,8 @@ impl AppDaemon {
                                         observer_clone.clone(),
                                         transfer_id,
                                         cancel_clone.clone(),
+                                        false
+                                        // self.conoverwrite
                                     )
                                     .await?;
 
@@ -191,9 +193,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_full_network_transfer() -> anyhow::Result<()> {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .expect("Failed to install crypto provider");
+        let _ = rustls::crypto::ring::default_provider().install_default();
 
         let source_dir = tempdir()?;
         let dest_dir = tempdir()?;
@@ -237,6 +237,66 @@ mod tests {
         // Clean up the background server task
         server_handle.abort();
 
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_unique_naming_transfer() -> anyhow::Result<()> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let source_dir = tempdir()?;
+        let dest_dir = tempdir()?;
+        let source_path_1 = source_dir.path().join("source.bin");
+        let source_path_2 = source_dir.path().join("source_different.bin");
+        let received_dir = dest_dir.path().to_path_buf();
+
+        let mut buffer_1 = vec![0u8; 1 * 1024 * 1024];
+        rand::rng().fill_bytes(&mut buffer_1);
+        std::fs::write(&source_path_1, &buffer_1)?;
+
+        let mut buffer_2 = vec![0u8; 1 * 1024 * 1024];
+        rand::rng().fill_bytes(&mut buffer_2);
+        std::fs::write(&source_path_2, &buffer_2)?;
+
+        let source_dir_2 = tempdir()?;
+        let source_path_2_named_same = source_dir_2.path().join("source.bin");
+        std::fs::copy(&source_path_2, &source_path_2_named_same)?;
+
+        let app_daemon = AppDaemon::new("127.0.0.1:0".parse()?)?;
+        let bound_server_addr = app_daemon.endpoint.local_addr()?;
+
+        let target_path_clone = received_dir.clone();
+        let server_handle = tokio::spawn(async move {
+            app_daemon
+                .run(
+                    target_path_clone,
+                    Arc::new(AutoAccept),
+                    Arc::new(TestObserver),
+                    CancellationToken::new(),
+                )
+                .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let client_1 = Sender::connect(bound_server_addr, &source_path_1).await?;
+        client_1.process_chunks(Arc::new(TestObserver {})).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let client_2 = Sender::connect(bound_server_addr, &source_path_2_named_same).await?;
+        client_2.process_chunks(Arc::new(TestObserver {})).await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(file_diff::diff(
+            source_path_1.to_str().unwrap(),
+            received_dir.join("source.bin").to_str().unwrap()
+        ));
+        assert!(file_diff::diff(
+            source_path_2_named_same.to_str().unwrap(),
+            received_dir.join("source (1).bin").to_str().unwrap()
+        ));
+
+        server_handle.abort();
         Ok(())
     }
 }

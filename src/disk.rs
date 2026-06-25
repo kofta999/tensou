@@ -71,7 +71,7 @@ pub struct DiskWriter {
     state: State,
     state_file_path: PathBuf,
     part_file_path: PathBuf,
-    target_path: PathBuf,
+    full_path: PathBuf,
     is_resumed: bool,
     file: Option<File>,
     transfer_id: u32,
@@ -86,18 +86,13 @@ impl DiskWriter {
         IgnitionPayload {
             rx,
             ins,
-            target_path,
             transfer_id,
             observer,
             cancel_token,
         }: IgnitionPayload,
     ) -> anyhow::Result<Self> {
-        let base_path = ins.metadata.resolve_path(&target_path);
-
-        let mut state_file_path = base_path.clone();
-        state_file_path.add_extension("state");
-        let mut part_file_path = base_path;
-        part_file_path.add_extension("part");
+        let state_file_path = ins.full_path.with_added_extension("state");
+        let part_file_path = ins.full_path.with_added_extension("part");
 
         Ok(Self {
             state: ins.state,
@@ -105,7 +100,7 @@ impl DiskWriter {
             part_file_path,
             metadata: ins.metadata,
             is_resumed: ins.is_resumed,
-            target_path: target_path.into(),
+            full_path: ins.full_path,
             file: None,
             transfer_id,
             rx,
@@ -211,9 +206,7 @@ impl DiskWriter {
 
         fs::remove_file(&self.state_file_path)?;
 
-        let dest_path = self.metadata.resolve_path(Path::new(&self.target_path));
-
-        fs::rename(&self.part_file_path, dest_path)?;
+        fs::rename(&self.part_file_path, &self.full_path)?;
 
         Ok(())
     }
@@ -222,7 +215,6 @@ impl DiskWriter {
 pub struct IgnitionPayload {
     pub rx: ChunkPacketReceiver,
     pub ins: JobInstruction,
-    pub target_path: PathBuf,
     pub transfer_id: u32,
     pub observer: Arc<dyn TransferObserver>,
     pub cancel_token: CancellationToken,
@@ -302,7 +294,6 @@ mod tests {
             ins: instruction,
             rx,
             transfer_id: 0,
-            target_path: received_dir.to_path_buf(),
             observer: Arc::new(TestObserver {}),
             cancel_token: CancellationToken::new(),
         };

@@ -1,7 +1,9 @@
 use crate::{
     CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     disk::{IgnitionPayload, ReceiveSession},
-    protocol::{ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferObserver},
+    protocol::{
+        ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferObserver, find_unique_path,
+    },
 };
 use std::{collections::HashMap, path::Path, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,11 +35,19 @@ impl PendingTransfer {
         observer: Arc<dyn TransferObserver>,
         transfer_id: u32,
         cancel_token: CancellationToken,
+        overwrite: bool,
     ) -> anyhow::Result<Receiver> {
         self.send_stream.write_u8(1).await?;
 
-        let job_name = self.manifest.job_name.clone();
-        let target_path = target_dir.join(&self.manifest.job_name);
+        let mut target_path = target_dir.join(&self.manifest.job_name);
+        if !overwrite {
+            target_path = find_unique_path(&target_path);
+        }
+        let job_name = target_path
+            .file_name()
+            .map(|v| v.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.manifest.job_name.clone());
+
         let target_path_clone = target_path.clone();
 
         let instructions = tokio::task::spawn_blocking(move || {
@@ -68,7 +78,6 @@ impl PendingTransfer {
             let payload = IgnitionPayload {
                 ins,
                 observer: observer.clone(),
-                target_path: target_path.clone(),
                 rx,
                 transfer_id,
                 cancel_token: cancel_token.clone(),
