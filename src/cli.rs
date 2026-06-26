@@ -295,61 +295,38 @@ pub async fn run() -> anyhow::Result<()> {
                 pending: Mutex::new(HashMap::new()),
             });
 
-            let options = eframe::NativeOptions {
-                viewport: eframe::egui::ViewportBuilder::default()
-                    .with_inner_size([850.0, 650.0])
-                    .with_min_inner_size([700.0, 500.0]),
-                ..Default::default()
-            };
-            eframe::run_native(
-                "Tensou",
-                options,
-                Box::new(move |cc| {
-                    let egui_ctx = cc.egui_ctx.clone();
-                    let daemon_event_tx = event_tx.clone();
-                    let daemon_consent_registry = consent_registry.clone();
-                    let ctx_clone = egui_ctx.clone();
+            let daemon_event_tx = event_tx.clone();
+            let daemon_consent_registry = consent_registry.clone();
 
-                    tokio::spawn(async move {
-                        let target_dir = resolve_save_directory(None).unwrap(); // Default ~/Downloads/Tensou
-                        let bind_addr =
-                            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), SERVER_PORT);
+            tokio::spawn(async move {
+                let target_dir = resolve_save_directory(None).unwrap(); // Default ~/Downloads/Tensou
+                let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), SERVER_PORT);
 
-                        if let Ok(daemon) = ReceiverDaemon::new(
-                            bind_addr,
-                            Config {
-                                target_dir,
-                                overwrite_dest: false,
-                            },
-                        ) {
-                            let cancel_token = CancellationToken::new();
+                if let Ok(daemon) = ReceiverDaemon::new(
+                    bind_addr,
+                    Config {
+                        target_dir,
+                        overwrite_dest: false,
+                    },
+                ) {
+                    let cancel_token = CancellationToken::new();
 
-                            let observer = Arc::new(GuiTransferObserver {
-                                transfer_id: 0,
-                                tx: daemon_event_tx.clone(),
-                                ctx: ctx_clone.clone(),
-                                is_sender: false,
-                            });
-
-                            let consent_handler = Arc::new(GuiConsentHandler {
-                                registry: daemon_consent_registry,
-                                event_tx: daemon_event_tx.clone(),
-                                ctx: ctx_clone.clone(),
-                            });
-
-                            daemon.run(consent_handler, observer, cancel_token).await;
-                        }
+                    let observer = Arc::new(GuiTransferObserver {
+                        transfer_id: 0,
+                        tx: daemon_event_tx.clone(),
+                        is_sender: false,
                     });
 
-                    Ok(Box::new(crate::gui::GuiApp::new(
-                        devices_rx,
-                        event_tx,
-                        event_rx,
-                        consent_registry,
-                    )))
-                }),
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to run eframe: {:?}", e))?;
+                    let consent_handler = Arc::new(GuiConsentHandler {
+                        registry: daemon_consent_registry,
+                        event_tx: daemon_event_tx.clone(),
+                    });
+
+                    daemon.run(consent_handler, observer, cancel_token).await;
+                }
+            });
+
+            crate::gui::run_gui(devices_rx, event_tx, event_rx, consent_registry)?;
             Ok(())
         }
     }

@@ -1,0 +1,18 @@
+// Shared data structures used across all UI components.
+
+export struct Device {
+    hostname: string,
+    ip: string,
+    port: int,
+    initials: string,
+}
+
+export struct Transfer {
+    id: int,
+    is_sender: bool,
+    job_name: string,
+    total_bytes: string,
+    bytes_transferred: string,
+    progress: float,
+    speed_eta: string,
+}

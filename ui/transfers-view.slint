@@ -1,0 +1,93 @@
+import { Button, ScrollView } from "std-widgets.slint";
+import { Transfer } from "types.slint";
+import { ProgressBar } from "components.slint";
+
+export component TransfersView inherits VerticalLayout {
+    in property <[Transfer]> active_transfers: [];
+    callback cancel_transfer(int);
+
+    padding: 16px;
+    spacing: 12px;
+
+    Text {
+        text: "Active Transfers Monitor";
+        font-size: 16px;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+
+    if active_transfers.length == 0: VerticalLayout {
+        alignment: center;
+        height: 200px;
+        spacing: 10px;
+        Text {
+            text: "No active file transfers.";
+            color: #64748b;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Choose a device on the 'Send' tab to start transferring files.";
+            color: #64748b;
+            font-size: 12px;
+            horizontal-alignment: center;
+        }
+    }
+
+    if active_transfers.length > 0: ScrollView {
+        height: 380px;
+        VerticalLayout {
+            spacing: 10px;
+            for transfer in active_transfers: Rectangle {
+                background: #0f172a;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: #334155;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: (transfer.is_sender ? "Sending: " : "Receiving: ") + transfer.job_name;
+                            color: #f8fafc;
+                            font-weight: 700;
+                            width: 200px;
+                            overflow: elide;
+                        }
+
+                        Button {
+                            text: "Cancel";
+                            width: 60px;
+                            clicked => {
+                                cancel_transfer(transfer.id);
+                            }
+                        }
+                    }
+
+                    ProgressBar {
+                        progress: transfer.progress;
+                        is_sender: transfer.is_sender;
+                    }
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text {
+                            text: transfer.bytes_transferred + " / " + transfer.total_bytes;
+                            color: #94a3b8;
+                            font-size: 12px;
+                        }
+
+                        Text {
+                            text: transfer.speed_eta;
+                            color: #94a3b8;
+                            font-size: 12px;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

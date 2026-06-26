@@ -1,0 +1,127 @@
+import { Device } from "types.slint";
+
+export component ProgressBar inherits Rectangle {
+    in property <float> progress: 0.0;
+    in property <bool> is_sender: true;
+    
+    height: 20px;
+    background: #0f172a; // Dark slate
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #1e293b;
+    clip: true;
+    
+    // Dynamic progress fill with gradient and animated width
+    Rectangle {
+        x: 0px;
+        width: parent.width * progress;
+        height: parent.height;
+        background: is_sender 
+            ? @linear-gradient(90deg, #0284c7 0%, #38bdf8 100%) // Cyan gradient for Send
+            : @linear-gradient(90deg, #15803d 0%, #22c55e 100%); // Green gradient for Receive
+        border-radius: 10px;
+        
+        animate width { duration: 200ms; easing: ease-out; }
+    }
+    
+    Text {
+        text: Math.round(progress * 100) + "%";
+        color: white;
+        font-size: 11px;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component DeviceCard inherits Rectangle {
+    in property <Device> dev;
+    callback clicked();
+
+    height: 60px;
+    background: touch.has-hover ? #1e293b : #0f172a;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: touch.has-hover ? #38bdf8 : #334155;
+    
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+    
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        alignment: start;
+        
+        // Avatar circle with sleek gradient
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            background: @linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            border-radius: 20px;
+            border-width: 1px;
+            border-color: #38bdf8;
+            y: (parent.height - self.height) / 2;
+            
+            Text {
+                text: dev.initials;
+                color: white;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: dev.hostname;
+                color: touch.has-hover ? #38bdf8 : #f8fafc;
+                font-weight: 700;
+                font-size: 14px;
+                animate color { duration: 150ms; }
+            }
+            Text {
+                text: dev.ip + ":" + dev.port;
+                color: #64748b;
+                font-size: 12px;
+            }
+        }
+    }
+    
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    background: active ? #1e293b : (touch.has-hover ? #0f172a : #020617);
+    border-radius: 8px;
+    border-width: active ? 1px : 0px;
+    border-color: active ? #38bdf8 : #1e293b;
+    
+    animate background { duration: 200ms; }
+    animate border-color { duration: 200ms; }
+
+    Text {
+        text: root.text;
+        color: active ? #38bdf8 : (touch.has-hover ? #e2e8f0 : #94a3b8);
+        font-weight: active ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        
+        animate color { duration: 200ms; }
+    }
+    
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}

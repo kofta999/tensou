@@ -1,0 +1,185 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { Device } from "types.slint";
+import { DeviceCard } from "components.slint";
+
+export component SendView inherits VerticalLayout {
+    in property <[Device]> devices: [];
+    in property <string> direct_ip: "";
+    in-out property <bool> showing_device_actions: false;
+    in-out property <Device> selected_device;
+
+    callback direct_ip_changed(string);
+    callback direct_send_file(string);
+    callback direct_send_folder(string);
+    callback device_send_file(Device);
+    callback device_send_folder(Device);
+
+    padding: 16px;
+    spacing: 16px;
+
+    if !showing_device_actions: VerticalLayout {
+        spacing: 14px;
+
+        Text {
+            text: "Local Network Devices";
+            font-size: 16px;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+
+        if devices.length == 0: VerticalLayout {
+            alignment: center;
+            height: 120px;
+            spacing: 12px;
+            Text {
+                text: "Scanning for receivers on the LAN...";
+                color: #64748b;
+                horizontal-alignment: center;
+            }
+        }
+
+        if devices.length > 0: ScrollView {
+            height: 150px;
+            VerticalLayout {
+                spacing: 8px;
+                for dev in devices: DeviceCard {
+                    dev: dev;
+                    clicked => {
+                        selected_device = dev;
+                        showing_device_actions = true;
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: #334155;
+        }
+
+        Text {
+            text: "Direct Connect";
+            font-size: 16px;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+
+        VerticalLayout {
+            spacing: 8px;
+            Text {
+                text: "Target Device Address:";
+                color: #94a3b8;
+                font-size: 12px;
+            }
+
+            ip_input := LineEdit {
+                text: direct_ip;
+                placeholder-text: "192.168.1.100:6967";
+                edited(text) => {
+                    direct_ip_changed(text);
+                }
+            }
+
+            Button {
+                text: "📄 Send File";
+                clicked => {
+                    direct_send_file(ip_input.text);
+                }
+            }
+
+            Button {
+                text: "📁 Send Folder";
+                clicked => {
+                    direct_send_folder(ip_input.text);
+                }
+            }
+        }
+    }
+
+    if showing_device_actions: VerticalLayout {
+        spacing: 16px;
+
+        Button {
+            text: "← Back to Devices";
+            clicked => {
+                showing_device_actions = false;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 8px;
+            Text {
+                text: "Send Destination";
+                font-size: 14px;
+                color: #94a3b8;
+            }
+
+            Rectangle {
+                background: #0f172a;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: #334155;
+                height: 60px;
+
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        background: #0284c7;
+                        border-radius: 20px;
+                        Text {
+                            text: selected_device.initials;
+                            color: white;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: selected_device.hostname;
+                            color: #f8fafc;
+                            font-weight: 700;
+                            font-size: 16px;
+                        }
+
+                        Text {
+                            text: selected_device.ip + ":" + selected_device.port;
+                            color: #64748b;
+                            font-size: 12px;
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 10px;
+            Text {
+                text: "Select Content to Send";
+                font-size: 14px;
+                color: #94a3b8;
+            }
+
+            Button {
+                text: "📄 Send File";
+                clicked => {
+                    device_send_file(selected_device);
+                }
+            }
+
+            Button {
+                text: "📁 Send Folder";
+                clicked => {
+                    device_send_folder(selected_device);
+                }
+            }
+        }
+    }
+}

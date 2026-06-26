@@ -25,11 +25,19 @@ rand = "0.10.1"
 dialoguer = "0.12.0"
 async-trait = "0.1.89"
 tokio-util = "0.7.18"
-eframe = "0.34.0"
-egui = "0.34.0"
-egui-elegance = "0.10"
+slint = { version = "1.17.0", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software", "software-renderer-path"] }
 rfd = "0.17.2"
+
+[build-dependencies]
+slint-build = "1.17.0"
 
 [dev-dependencies]
 file_diff = "1.0.0"
 tempfile = "3.27.0"
+
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true          # Enable Link-Time Optimization (LTO)
+codegen-units = 1   # Limit to 1 codegen unit to enable full LTO optimizations
+panic = "abort"     # Remove unwinding information (reduces binary size)
+strip = true        # Automatically strip debug symbols from binary
