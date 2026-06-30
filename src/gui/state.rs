@@ -3,7 +3,6 @@ use crate::protocol::{TransferConsentHandler, TransferObserver};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -31,19 +30,6 @@ impl Into<usize> for GuiScreen {
     fn into(self) -> usize {
         self as usize
     }
-}
-
-/// Holds the application state that drives the GUI.
-/// All fields can be read/updated by backend channels.
-pub struct GuiState {
-    pub download_dir: PathBuf,
-    pub devices: Vec<GuiDevice>,
-    pub active_transfers: Vec<GuiTransfer>, // Supports multiple simultaneous transfers
-    pub pending_consent: Option<GuiConsent>,
-    pub listen_port: u16,
-    pub direct_ip: String,
-    pub current_tab: GuiScreen,
-    pub selected_device: Option<GuiDevice>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,27 +73,6 @@ pub struct GuiTransfer {
     pub total_bytes: u64,
     pub bytes_transferred: u64,
     pub start_time: Instant,
-}
-
-pub struct GuiConsent {
-    pub transfer_id: u32,
-    pub peer_addr: SocketAddr,
-    pub job_name: String,
-}
-
-impl Default for GuiState {
-    fn default() -> Self {
-        Self {
-            download_dir: PathBuf::from("/home/kofta/Downloads/Tensou"),
-            listen_port: 6967,
-            direct_ip: String::new(),
-            current_tab: GuiScreen::Send,
-            devices: vec![],
-            active_transfers: vec![],
-            pending_consent: None,
-            selected_device: None,
-        }
-    }
 }
 
 pub enum GuiEvent {
@@ -178,19 +143,34 @@ impl ConsentRegistry {
     }
 
     pub fn accept(&self, transfer_id: u32) {
-        println!("[DEBUG] ConsentRegistry::accept: trying to accept transfer_id={}", transfer_id);
+        println!(
+            "[DEBUG] ConsentRegistry::accept: trying to accept transfer_id={}",
+            transfer_id
+        );
         let mut pending = self.pending.lock().unwrap();
-        println!("[DEBUG] ConsentRegistry::accept: pending keys: {:?}", pending.keys().collect::<Vec<_>>());
+        println!(
+            "[DEBUG] ConsentRegistry::accept: pending keys: {:?}",
+            pending.keys().collect::<Vec<_>>()
+        );
         if let Some(tx) = pending.remove(&transfer_id) {
-            println!("[DEBUG] ConsentRegistry::accept: found sender for transfer_id={}", transfer_id);
+            println!(
+                "[DEBUG] ConsentRegistry::accept: found sender for transfer_id={}",
+                transfer_id
+            );
             let _ = tx.send(true);
         } else {
-            println!("[DEBUG] ConsentRegistry::accept: SENDER NOT FOUND for transfer_id={}", transfer_id);
+            println!(
+                "[DEBUG] ConsentRegistry::accept: SENDER NOT FOUND for transfer_id={}",
+                transfer_id
+            );
         }
     }
 
     pub fn reject(&self, transfer_id: u32) {
-        println!("[DEBUG] ConsentRegistry::reject: trying to reject transfer_id={}", transfer_id);
+        println!(
+            "[DEBUG] ConsentRegistry::reject: trying to reject transfer_id={}",
+            transfer_id
+        );
         let mut pending = self.pending.lock().unwrap();
         if let Some(tx) = pending.remove(&transfer_id) {
             let _ = tx.send(false);
@@ -209,7 +189,10 @@ impl TransferConsentHandler for GuiConsentHandler {
         let transfer_id = rand::random::<u32>();
         let (tx, rx) = oneshot::channel();
 
-        println!("[DEBUG] GuiConsentHandler::request_consent: generated transfer_id={}", transfer_id);
+        println!(
+            "[DEBUG] GuiConsentHandler::request_consent: generated transfer_id={}",
+            transfer_id
+        );
 
         self.registry
             .pending
