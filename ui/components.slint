@@ -3,30 +3,32 @@ import { Device } from "types.slint";
 export component ProgressBar inherits Rectangle {
     in property <float> progress: 0.0;
     in property <bool> is_sender: true;
-    
-    height: 20px;
-    background: #0f172a; // Dark slate
-    border-radius: 10px;
+
+    height: 18px;
+    background: #16161e; // Deepest void background
+    border-radius: 9px;
     border-width: 1px;
-    border-color: #1e293b;
+    border-color: #292e42;
     clip: true;
-    
-    // Dynamic progress fill with gradient and animated width
+
+    // Dynamic progress fill with Tokyo Night colors
     Rectangle {
         x: 0px;
         width: parent.width * progress;
         height: parent.height;
-        background: is_sender 
-            ? @linear-gradient(90deg, #0284c7 0%, #38bdf8 100%) // Cyan gradient for Send
-            : @linear-gradient(90deg, #15803d 0%, #22c55e 100%); // Green gradient for Receive
-        border-radius: 10px;
-        
-        animate width { duration: 200ms; easing: ease-out; }
+        // Sakura Pink for sending, Matcha Green for receiving
+        background: is_sender ? #f7768e : #9ece6a;
+        border-radius: 9px;
+
+        animate width {
+            duration: 300ms;
+            easing: ease-out;
+        }
     }
-    
+
     Text {
         text: Math.round(progress * 100) + "%";
-        color: white;
+        color: #c0caf5; // Muted white
         font-size: 11px;
         font-weight: 800;
         horizontal-alignment: center;
@@ -38,57 +40,70 @@ export component DeviceCard inherits Rectangle {
     in property <Device> dev;
     callback clicked();
 
-    height: 60px;
-    background: touch.has-hover ? #1e293b : #0f172a;
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: touch.has-hover ? #38bdf8 : #334155;
-    
-    animate background { duration: 150ms; }
-    animate border-color { duration: 150ms; }
-    
+    height: 68px; // Reduced height to be more compact
+    background: touch.has-hover ? #292e42 : #24283b; // Subtle surface elevation
+    border-radius: 12px;
+
+    // Glowing border effect on hover
+    border-width: 2px;
+    border-color: touch.has-hover ? #7dcfff : transparent;
+
+    animate background { duration: 200ms; }
+    animate border-color {
+        duration: 200ms;
+        easing: ease-out;
+    }
+
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 14px;
         alignment: start;
-        
-        // Avatar circle with sleek gradient
+
+        // Compact Minimalist Avatar
         Rectangle {
             width: 40px;
             height: 40px;
-            background: @linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            background: #1a1b26; // Inner void
             border-radius: 20px;
-            border-width: 1px;
-            border-color: #38bdf8;
+            border-width: 2px;
+            border-color: #7dcfff; // Cyan outline
             y: (parent.height - self.height) / 2;
-            
+
+            // Subtle neon glow
+            drop-shadow-color: rgba(125, 207, 255, 0.4);
+            drop-shadow-blur: 8px;
+
             Text {
                 text: dev.initials;
-                color: white;
+                color: #7dcfff;
+                font-size: 16px;
                 font-weight: 800;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
-        
+
         VerticalLayout {
             alignment: center;
+            spacing: 2px;
             Text {
                 text: dev.hostname;
-                color: touch.has-hover ? #38bdf8 : #f8fafc;
-                font-weight: 700;
-                font-size: 14px;
-                animate color { duration: 150ms; }
+                color: touch.has-hover ? #ffffff : #c0caf5;
+                font-weight: 800;
+                font-size: 16px;
+                animate color { duration: 200ms; }
             }
+
             Text {
                 text: dev.ip + ":" + dev.port;
-                color: #64748b;
+                color: #565f89; // Dimmed text
                 font-size: 12px;
+                font-weight: 500;
             }
         }
     }
-    
+
     touch := TouchArea {
         clicked => {
             root.clicked();
@@ -101,24 +116,71 @@ export component TabButton inherits Rectangle {
     in property <bool> active;
     callback clicked();
 
-    background: active ? #1e293b : (touch.has-hover ? #0f172a : #020617);
-    border-radius: 8px;
-    border-width: active ? 1px : 0px;
-    border-color: active ? #38bdf8 : #1e293b;
-    
-    animate background { duration: 200ms; }
-    animate border-color { duration: 200ms; }
+    background: transparent;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+
+        Text {
+            text: root.text;
+            // Sakura pink for active, muted slate for inactive
+            color: active ? #f7768e : (touch.has-hover ? #c0caf5 : #565f89);
+            font-weight: active ? 800 : 600;
+            font-size: 15px;
+            horizontal-alignment: center;
+
+            animate color { duration: 250ms; }
+        }
+
+        // Underline indicator (very Japanese-minimalist)
+        Rectangle {
+            height: 3px;
+            width: active ? 100% : 0%;
+            background: #f7768e;
+            border-radius: 2px;
+            horizontal-stretch: 0;
+
+            animate width {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ZenButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 44px;
+    background: primary ? (touch.has-hover ? #ff9eaf : @linear-gradient(135deg, #f7768e 0%, #de5d83 100%)) : (touch.has-hover ? #3b4261 : #292e42);
+
+    // Sharp corners by default, rounded on hover
+    border-radius: touch.has-hover ? 8px : 0px;
+    border-width: primary ? 0px : 1px;
+    border-color: primary ? transparent : (touch.has-hover ? #7dcfff : #3b4261);
+
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+    animate border-radius { duration: 150ms; }
 
     Text {
         text: root.text;
-        color: active ? #38bdf8 : (touch.has-hover ? #e2e8f0 : #94a3b8);
-        font-weight: active ? 700 : 500;
+        color: primary ? #1a1b26 : #c0caf5;
+        font-weight: 800;
+        font-size: 14px;
         horizontal-alignment: center;
         vertical-alignment: center;
-        
-        animate color { duration: 200ms; }
     }
-    
+
     touch := TouchArea {
         clicked => {
             root.clicked();

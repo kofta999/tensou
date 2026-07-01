@@ -1,47 +1,49 @@
-import { Button } from "std-widgets.slint";
+import { ZenButton } from "components.slint";
 
 export component SettingsView inherits VerticalLayout {
     in property <string> download_dir: "";
     in property <int> listen_port: 6967;
     callback change_download_dir();
 
-    padding: 16px;
-    spacing: 16px;
+    padding: 24px; // Zen spacing
+    spacing: 20px;
 
     Text {
         text: "Application Settings";
         font-size: 16px;
-        font-weight: 700;
-        color: #f8fafc;
+        font-weight: 800;
+        color: #c0caf5;
     }
 
     VerticalLayout {
-        spacing: 8px;
+        spacing: 10px;
         Text {
             text: "Download Save Location:";
-            color: #94a3b8;
-            font-size: 12px;
+            color: #565f89;
+            font-size: 13px;
+            font-weight: 600;
         }
 
         Rectangle {
-            background: #0f172a;
-            border-radius: 4px;
+            background: #1a1b26; // Inner void
+            border-radius: 8px;
             border-width: 1px;
-            border-color: #334155;
+            border-color: #292e42;
 
             VerticalLayout {
-                padding: 10px;
+                padding: 12px;
                 Text {
                     text: download_dir;
-                    color: #e2e8f0;
+                    color: #ffffff;
                     font-weight: 700;
                     wrap: word-wrap;
                 }
             }
         }
 
-        Button {
+        ZenButton {
             text: "📁 Change Directory";
+            primary: false;
             clicked => {
                 change_download_dir();
             }
@@ -50,20 +52,23 @@ export component SettingsView inherits VerticalLayout {
 
     Rectangle {
         height: 1px;
-        background: #334155;
+        background: #292e42; // Splitter line
     }
 
     HorizontalLayout {
         alignment: space-between;
         Text {
             text: "Listening Network Port:";
-            color: #94a3b8;
+            color: #565f89;
+            font-size: 14px;
+            font-weight: 600;
         }
 
         Text {
             text: listen_port;
-            color: #f8fafc;
-            font-weight: 700;
+            color: #7dcfff; // Neo-Cyan accent highlight
+            font-weight: 800;
+            font-size: 14px;
         }
     }
 }

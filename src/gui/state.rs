@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GuiScreen {
@@ -73,6 +74,7 @@ pub struct GuiTransfer {
     pub total_bytes: u64,
     pub bytes_transferred: u64,
     pub start_time: Instant,
+    pub cancel_token: CancellationToken,
 }
 
 pub enum GuiEvent {
@@ -82,6 +84,7 @@ pub enum GuiEvent {
         is_sender: bool,
         job_name: String,
         total_bytes: u64,
+        cancel_token: CancellationToken,
     },
     /// A chunk of bytes was successfully transferred
     ChunkTransferred { transfer_id: u32, bytes: u64 },
@@ -109,12 +112,14 @@ impl TransferObserver for GuiTransferObserver {
         _peer: SocketAddr,
         total_bytes: u64,
         job_name: &str,
+        cancel_token: CancellationToken,
     ) {
         let _ = self.tx.send(GuiEvent::TransferStarted {
             transfer_id,
             is_sender: self.is_sender,
             job_name: job_name.to_string(),
             total_bytes,
+            cancel_token,
         });
     }
 
@@ -128,6 +133,13 @@ impl TransferObserver for GuiTransferObserver {
 
     fn on_transfer_complete(&self, transfer_id: u32) {
         let _ = self.tx.send(GuiEvent::TransferFinished { transfer_id });
+    }
+
+    fn on_transfer_failed(&self, transfer_id: u32, error: &str) {
+        let _ = self.tx.send(GuiEvent::TransferFailed {
+            transfer_id,
+            error: error.to_string(),
+        });
     }
 }
 

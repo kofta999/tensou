@@ -27,6 +27,7 @@ impl TransferObserver for CliReceiveTransfer {
         _peer: SocketAddr,
         total_bytes: u64,
         job_name: &str,
+        _cancel_token: CancellationToken,
     ) {
         let pb = self
             .multi_progress
@@ -50,6 +51,12 @@ impl TransferObserver for CliReceiveTransfer {
                     .expect("Invalid style"),
             );
             pb.finish_with_message("Done!");
+        }
+    }
+
+    fn on_transfer_failed(&self, transfer_id: u32, error: &str) {
+        if let Some(pb) = self.active.lock().unwrap().remove(&transfer_id) {
+            pb.finish_with_message(format!("Failed: {}", error));
         }
     }
 }

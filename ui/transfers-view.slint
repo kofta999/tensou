@@ -1,66 +1,70 @@
-import { Button, ScrollView } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 import { Transfer } from "types.slint";
-import { ProgressBar } from "components.slint";
+import { ProgressBar, ZenButton } from "components.slint";
 
 export component TransfersView inherits VerticalLayout {
     in property <[Transfer]> active_transfers: [];
     callback cancel_transfer(int);
 
-    padding: 16px;
-    spacing: 12px;
+    padding: 24px; // Zen spacing
+    spacing: 16px;
 
     Text {
         text: "Active Transfers Monitor";
         font-size: 16px;
-        font-weight: 700;
-        color: #f8fafc;
+        font-weight: 800;
+        color: #c0caf5;
     }
 
     if active_transfers.length == 0: VerticalLayout {
         alignment: center;
-        height: 200px;
-        spacing: 10px;
+        height: 220px;
+        spacing: 12px;
         Text {
             text: "No active file transfers.";
-            color: #64748b;
+            color: #565f89;
             horizontal-alignment: center;
+            font-size: 14px;
         }
 
         Text {
             text: "Choose a device on the 'Send' tab to start transferring files.";
-            color: #64748b;
+            color: #565f89;
             font-size: 12px;
             horizontal-alignment: center;
         }
     }
 
-    if active_transfers.length > 0: ScrollView {
+    if active_transfers.length > 0: ListView {
         height: 380px;
-        VerticalLayout {
-            spacing: 10px;
-            for transfer in active_transfers: Rectangle {
-                background: #0f172a;
-                border-radius: 6px;
+        for transfer in active_transfers: VerticalLayout {
+            padding-bottom: 12px;
+
+            Rectangle {
+                background: #1a1b26; // Void card background
+                border-radius: 12px;
                 border-width: 1px;
-                border-color: #334155;
+                border-color: #292e42;
 
                 VerticalLayout {
-                    padding: 12px;
-                    spacing: 10px;
+                    padding: 16px;
+                    spacing: 12px;
 
                     HorizontalLayout {
                         alignment: space-between;
                         Text {
                             text: (transfer.is_sender ? "Sending: " : "Receiving: ") + transfer.job_name;
-                            color: #f8fafc;
-                            font-weight: 700;
+                            color: #ffffff;
+                            font-weight: 800;
+                            font-size: 14px;
                             width: 200px;
                             overflow: elide;
                         }
 
-                        Button {
+                        ZenButton {
                             text: "Cancel";
-                            width: 60px;
+                            width: 72px;
+                            height: 32px; // Slightly smaller height for table action
                             clicked => {
                                 cancel_transfer(transfer.id);
                             }
@@ -76,14 +80,16 @@ export component TransfersView inherits VerticalLayout {
                         alignment: space-between;
                         Text {
                             text: transfer.bytes_transferred + " / " + transfer.total_bytes;
-                            color: #94a3b8;
+                            color: #565f89;
                             font-size: 12px;
+                            font-weight: 600;
                         }
 
                         Text {
                             text: transfer.speed_eta;
-                            color: #94a3b8;
+                            color: #565f89;
                             font-size: 12px;
+                            font-weight: 600;
                         }
                     }
                 }

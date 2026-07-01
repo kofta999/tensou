@@ -1,6 +1,6 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Device } from "types.slint";
-import { DeviceCard } from "components.slint";
+import { DeviceCard, ZenButton } from "components.slint";
 
 export component SendView inherits VerticalLayout {
     in property <[Device]> devices: [];
@@ -14,17 +14,17 @@ export component SendView inherits VerticalLayout {
     callback device_send_file(Device);
     callback device_send_folder(Device);
 
-    padding: 16px;
-    spacing: 16px;
+    padding: 24px;
+    spacing: 20px;
 
     if !showing_device_actions: VerticalLayout {
-        spacing: 14px;
+        spacing: 18px;
 
         Text {
             text: "Local Network Devices";
             font-size: 16px;
-            font-weight: 700;
-            color: #f8fafc;
+            font-weight: 800;
+            color: #c0caf5;
         }
 
         if devices.length == 0: VerticalLayout {
@@ -33,15 +33,16 @@ export component SendView inherits VerticalLayout {
             spacing: 12px;
             Text {
                 text: "Scanning for receivers on the LAN...";
-                color: #64748b;
+                color: #565f89;
                 horizontal-alignment: center;
+                font-size: 14px;
             }
         }
 
         if devices.length > 0: ScrollView {
             height: 150px;
             VerticalLayout {
-                spacing: 8px;
+                spacing: 10px;
                 for dev in devices: DeviceCard {
                     dev: dev;
                     clicked => {
@@ -54,22 +55,23 @@ export component SendView inherits VerticalLayout {
 
         Rectangle {
             height: 1px;
-            background: #334155;
+            background: #292e42;
         }
 
         Text {
             text: "Direct Connect";
             font-size: 16px;
-            font-weight: 700;
-            color: #f8fafc;
+            font-weight: 800;
+            color: #c0caf5;
         }
 
         VerticalLayout {
-            spacing: 8px;
+            spacing: 10px;
             Text {
                 text: "Target Device Address:";
-                color: #94a3b8;
-                font-size: 12px;
+                color: #565f89;
+                font-size: 13px;
+                font-weight: 600;
             }
 
             ip_input := LineEdit {
@@ -80,61 +82,75 @@ export component SendView inherits VerticalLayout {
                 }
             }
 
-            Button {
-                text: "📄 Send File";
-                clicked => {
-                    direct_send_file(ip_input.text);
+            HorizontalLayout {
+                spacing: 12px;
+                ZenButton {
+                    text: "📄 Send File";
+                    primary: true;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        direct_send_file(ip_input.text);
+                    }
                 }
-            }
 
-            Button {
-                text: "📁 Send Folder";
-                clicked => {
-                    direct_send_folder(ip_input.text);
+                ZenButton {
+                    text: "📁 Send Folder";
+                    primary: false;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        direct_send_folder(ip_input.text);
+                    }
                 }
             }
         }
     }
 
     if showing_device_actions: VerticalLayout {
-        spacing: 16px;
+        spacing: 20px;
 
-        Button {
+        ZenButton {
             text: "← Back to Devices";
+            primary: false;
             clicked => {
                 showing_device_actions = false;
             }
         }
 
         VerticalLayout {
-            spacing: 8px;
+            spacing: 10px;
             Text {
                 text: "Send Destination";
                 font-size: 14px;
-                color: #94a3b8;
+                font-weight: 700;
+                color: #565f89;
             }
 
             Rectangle {
-                background: #0f172a;
-                border-radius: 6px;
+                background: #1a1b26;
+                border-radius: 12px;
                 border-width: 1px;
-                border-color: #334155;
-                height: 60px;
+                border-color: #292e42;
+                height: 84px;
 
                 HorizontalLayout {
-                    padding: 10px;
-                    spacing: 12px;
+                    padding: 16px;
+                    spacing: 18px;
                     alignment: start;
 
                     Rectangle {
-                        width: 40px;
-                        height: 40px;
-                        background: #0284c7;
-                        border-radius: 20px;
+                        width: 52px;
+                        height: 52px;
+                        background: #24283b;
+                        border-radius: 26px;
+                        border-width: 2px;
+                        border-color: #7dcfff;
+                        y: (parent.height - self.height) / 2;
+
                         Text {
                             text: selected_device.initials;
-                            color: white;
-                            font-weight: 700;
+                            color: #7dcfff;
+                            font-size: 20px;
+                            font-weight: 800;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
@@ -144,15 +160,16 @@ export component SendView inherits VerticalLayout {
                         alignment: center;
                         Text {
                             text: selected_device.hostname;
-                            color: #f8fafc;
-                            font-weight: 700;
-                            font-size: 16px;
+                            color: #ffffff;
+                            font-weight: 800;
+                            font-size: 18px;
                         }
 
                         Text {
                             text: selected_device.ip + ":" + selected_device.port;
-                            color: #64748b;
-                            font-size: 12px;
+                            color: #565f89;
+                            font-size: 13px;
+                            font-weight: 500;
                         }
                     }
                 }
@@ -160,24 +177,32 @@ export component SendView inherits VerticalLayout {
         }
 
         VerticalLayout {
-            spacing: 10px;
+            spacing: 12px;
             Text {
                 text: "Select Content to Send";
                 font-size: 14px;
-                color: #94a3b8;
+                font-weight: 700;
+                color: #565f89;
             }
 
-            Button {
-                text: "📄 Send File";
-                clicked => {
-                    device_send_file(selected_device);
+            HorizontalLayout {
+                spacing: 12px;
+                ZenButton {
+                    text: "📄 Send File 123";
+                    primary: true;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        device_send_file(selected_device);
+                    }
                 }
-            }
 
-            Button {
-                text: "📁 Send Folder";
-                clicked => {
-                    device_send_folder(selected_device);
+                ZenButton {
+                    text: "📁 Send Folder";
+                    primary: false;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        device_send_folder(selected_device);
+                    }
                 }
             }
         }

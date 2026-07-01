@@ -5,6 +5,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+use slint::Model;
 
 slint::include_modules!();
 
@@ -39,6 +41,10 @@ pub fn run_gui(
             .into(),
     );
     main_window.set_listen_port(6967);
+
+    // Create a mutable model and attach it to the UI immediately
+    let initial_transfers_model = std::rc::Rc::new(slint::VecModel::<Transfer>::default());
+    main_window.set_active_transfers(initial_transfers_model.clone().into());
 
     // Setup callbacks
     // 1. Direct Connect changes
@@ -144,11 +150,6 @@ pub fn run_gui(
         }
     });
 
-    // 8. Cancel Transfer
-    main_window.on_cancel_transfer(|transfer_id| {
-        println!("Cancel clicked for transfer: {}", transfer_id);
-    });
-
     // Background task to process mDNS discovery and GUI events
     let main_window_weak = main_window.as_weak();
 
@@ -201,6 +202,7 @@ pub fn run_gui(
                     is_sender,
                     job_name,
                     total_bytes,
+                    cancel_token,
                 } => {
                     transfers.push(GuiTransfer {
                         id: transfer_id,
@@ -209,6 +211,7 @@ pub fn run_gui(
                         total_bytes,
                         bytes_transferred: 0,
                         start_time: std::time::Instant::now(),
+                        cancel_token,
                     });
                 }
                 GuiEvent::ChunkTransferred { transfer_id, bytes } => {
@@ -271,8 +274,23 @@ pub fn run_gui(
                 .collect();
 
             let _ = main_window_weak_transfers.upgrade_in_event_loop(move |ui| {
-                let model = rc_model_from_vec(slint_transfers);
-                ui.set_active_transfers(model.into());
+                // 1. Get the current model from the UI
+                let current_model = ui.get_active_transfers();
+                
+                // 2. Downcast it to the mutable VecModel we created earlier
+                if let Some(vec_model) = current_model.as_any().downcast_ref::<slint::VecModel<Transfer>>() {
+                    if vec_model.row_count() == slint_transfers.len() {
+                        // NO TRANSFERS ADDED OR REMOVED.
+                        // Update the data in place. This prevents the ZenButton 
+                        // from being destroyed, fixing the click bug!
+                        for (i, transfer) in slint_transfers.into_iter().enumerate() {
+                            vec_model.set_row_data(i, transfer);
+                        }
+                    } else {
+                        // A transfer was added or removed. It is safe to rebuild the list.
+                        vec_model.set_vec(slint_transfers);
+                    }
+                }
 
                 if let Some((has_req, id, ip, name)) = consent_to_set {
                     ui.set_has_consent_request(has_req);
@@ -281,6 +299,16 @@ pub fn run_gui(
                     ui.set_consent_job_name(name.into());
                 }
             });
+        }
+    });
+
+    // 8. Cancel Transfer
+    let transfers_clone = local_transfers.clone();
+    main_window.on_cancel_transfer(move |transfer_id| {
+        println!("Cancel clicked for transfer: {}", transfer_id);
+        let transfers = transfers_clone.lock().unwrap();
+        if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
+            transfer.cancel_token.cancel();
         }
     });
 
@@ -307,7 +335,7 @@ fn send_file_background(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        match net::Sender::connect(target_addr, &path).await {
+        match net::Sender::connect(target_addr, &path, CancellationToken::new()).await {
             Ok(client) => {
                 let total_bytes = client.get_remaining_bytes();
                 let _ = tx_clone.send(GuiEvent::TransferStarted {
@@ -315,6 +343,7 @@ fn send_file_background(
                     is_sender: true,
                     job_name: job_name.clone(),
                     total_bytes,
+                    cancel_token: client.cancel_token.clone(),
                 });
 
                 let observer = std::sync::Arc::new(crate::gui::state::GuiTransferObserver {

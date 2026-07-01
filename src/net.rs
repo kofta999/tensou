@@ -65,7 +65,7 @@ mod tests {
         // Give the server 50ms to boot up and start listening
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let client = Sender::connect(bound_server_addr, &source_path).await?;
+        let client = Sender::connect(bound_server_addr, &source_path, CancellationToken::new()).await?;
         client.process_chunks(Arc::new(TestObserver {})).await?;
 
         // Give the server a tiny moment to flush the final commit() to disk
@@ -126,11 +126,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let client_1 = Sender::connect(bound_server_addr, &source_path_1).await?;
+        let client_1 = Sender::connect(bound_server_addr, &source_path_1, CancellationToken::new()).await?;
         client_1.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let client_2 = Sender::connect(bound_server_addr, &source_path_2_named_same).await?;
+        let client_2 = Sender::connect(bound_server_addr, &source_path_2_named_same, CancellationToken::new()).await?;
         client_2.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 

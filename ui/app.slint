@@ -9,9 +9,9 @@ export { Device, Transfer }
 
 export component MainWindow inherits Window {
     title: "Tensou";
-    width: 400px;
-    height: 600px;
-    background: #0f172a; // Slate-900
+    width: 480px;
+    height: 640px;
+    background: #1a1b26; // Tokyo Night Void Base
 
     // Properties for communication with Rust
     in property <[Device]> devices: [];
@@ -43,25 +43,25 @@ export component MainWindow inherits Window {
     callback direct_ip_changed(string);
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 16px;
+        padding: 24px; // Zen spacing
+        spacing: 20px;
 
         // Header
         HorizontalLayout {
             alignment: start;
-            spacing: 8px;
+            spacing: 12px;
 
-            // "送" badge icon
+            // Neon-Cyan "送" badge icon
             Rectangle {
-                width: 32px;
-                height: 32px;
-                background: #0284c7;
-                border-radius: 6px;
+                width: 36px;
+                height: 36px;
+                background: #7dcfff; // Neo-Cyan
+                border-radius: 8px;
                 Text {
                     text: "送";
-                    font-size: 18px;
-                    font-weight: 800;
-                    color: white;
+                    font-size: 20px;
+                    font-weight: 900;
+                    color: #1a1b26; // Dark text on cyan badge
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -71,17 +71,17 @@ export component MainWindow inherits Window {
                 alignment: center;
                 Text {
                     text: "Tensou";
-                    font-size: 20px;
+                    font-size: 22px;
                     font-weight: 800;
-                    color: #f8fafc;
+                    color: #c0caf5; // Primary white/slate-blue
                 }
             }
         }
 
         // Tab Bar
         HorizontalLayout {
-            height: 40px;
-            spacing: 4px;
+            height: 44px;
+            spacing: 12px;
 
             TabButton {
                 text: "Send (Devices)";
@@ -113,10 +113,9 @@ export component MainWindow inherits Window {
 
         // Content Area
         Rectangle {
-            background: #1e293b;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: #334155;
+            background: #24283b; // Lighter surface card
+            border-radius: 12px; // Softer corners
+            border-width: 0px;   // Remove harsh borders
             clip: true;
 
             // Tab 0: Send / Devices screen
@@ -162,38 +161,38 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Consent Modal popup overlay
+    // Consent Modal popup overlay with Tokyo Night base backdrop
     if has_consent_request: Rectangle {
-        background: rgba(15, 23, 42, 0.8);
+        background: rgba(26, 27, 38, 0.85); // Inky overlay
         width: 100%;
         height: 100%;
 
         Rectangle {
-            width: 300px;
-            height: 220px;
-            background: #1e293b;
-            border-radius: 8px;
+            width: 320px;
+            height: 240px;
+            background: #24283b; // Surface card
+            border-radius: 12px;
             border-width: 2px;
-            border-color: #d97706;
+            border-color: #f7768e; // Sakura Pink warning/consent border
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
 
             VerticalLayout {
-                padding: 20px;
-                spacing: 14px;
+                padding: 24px;
+                spacing: 16px;
                 alignment: center;
 
                 Text {
                     text: "Incoming Transfer Request";
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: #d97706;
+                    font-size: 18px;
+                    font-weight: 800;
+                    color: #f7768e; // Sakura Pink
                     horizontal-alignment: center;
                 }
 
                 Text {
                     text: consent_peer_ip + " wants to send you:";
-                    color: #94a3b8;
+                    color: #565f89; // Secondary/dimmed
                     font-size: 13px;
                     horizontal-alignment: center;
                     wrap: word-wrap;
@@ -201,13 +200,13 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: consent_job_name;
-                    font-size: 15px;
+                    font-size: 16px;
                     font-weight: 700;
-                    color: #f8fafc;
+                    color: #ffffff; // White highlight
                     horizontal-alignment: center;
                     wrap: word-wrap;
                     overflow: elide;
-                    max-height: 40px;
+                    max-height: 48px;
                 }
 
                 HorizontalLayout {

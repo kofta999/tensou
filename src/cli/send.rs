@@ -14,6 +14,7 @@ use tokio::{
     io::{self, AsyncBufReadExt},
     sync::mpsc,
 };
+use tokio_util::sync::CancellationToken;
 
 struct CliSendTransfer(ProgressBar);
 
@@ -103,7 +104,17 @@ pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result
 
     println!("Connecting to {selected_addr}...");
 
-    let client = Sender::connect(selected_addr, &path).await?;
+    let cancel_token = CancellationToken::new();
+    let cancel_clone = cancel_token.clone();
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for Ctrl+C");
+        cancel_clone.cancel();
+    });
+
+    let client = Sender::connect(selected_addr, &path, cancel_token).await?;
     let total_bytes = client.get_remaining_bytes();
 
     let pb = create_transfer_pb(total_bytes, &display_name, true);
