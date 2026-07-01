@@ -205,3 +205,40 @@ export component ZenButton inherits Rectangle {
         }
     }
 }
+
+export component ZenToggle inherits Rectangle {
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+
+    width: 48px;
+    height: 24px;
+    background: checked ? Theme.secondary : Theme.surface;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: checked ? Theme.secondary : Theme.surface-hover;
+
+    animate background { duration: 150ms; }
+
+    // Switch thumb
+    Rectangle {
+        x: checked ? parent.width - self.width - 2px : 2px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        background: checked ? Theme.text-dark : Theme.text-primary;
+        border-radius: 10px;
+
+        animate x {
+            duration: 150ms;
+            easing: ease-in-out;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            checked = !checked;
+            toggled(checked);
+        }
+    }
+}

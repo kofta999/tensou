@@ -3,13 +3,23 @@ import { Device } from "types.slint";
 import { DeviceCard, ZenButton } from "components.slint";
 import { Theme, AppData, Logic } from "globals.slint";
 
-export component SendView inherits VerticalLayout {
+export component SendView inherits FocusScope {
     // Purely local UI state
     in-out property <bool> showing_device_actions: false;
     in-out property <Device> selected_device;
 
-    padding: 24px;
-    spacing: 20px;
+    // Background click-away handler to clear focus
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => {
+            root.focus();
+        }
+    }
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 20px;
     
     if !showing_device_actions : VerticalLayout {
         spacing: 18px;
@@ -213,4 +223,5 @@ export component SendView inherits VerticalLayout {
             }
         }
     }
+}
 }

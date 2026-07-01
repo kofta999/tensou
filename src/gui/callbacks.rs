@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::gui::GuiTransfer;
 use crate::gui::state::ConsentRegistry;
 use crate::gui::state::GuiEvent;
@@ -17,7 +18,7 @@ pub fn setup(
     main_window: &MainWindow,
     event_tx: mpsc::UnboundedSender<GuiEvent>,
     consent_registry: Arc<ConsentRegistry>,
-    download_dir: Arc<Mutex<PathBuf>>,
+    config: Arc<Mutex<Config>>,
     local_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
 ) {
     let direct_ip = Arc::new(std::sync::Mutex::new(String::new()));
@@ -95,18 +96,40 @@ pub fn setup(
     // Change Download Directory
     main_window.global::<Logic>().on_change_download_dir({
         let main_window_weak = main_window.as_weak();
-        let download_dir = download_dir.clone();
+        let config = config.clone();
         move || {
             if let Some(path) = rfd::FileDialog::new()
                 .set_title("Select Download Directory")
                 .pick_folder()
             {
-                *download_dir.lock().unwrap() = path.clone();
+                let mut cfg = config.lock().unwrap();
+                cfg.target_dir = path.clone();
+                let _ = cfg.save();
                 if let Some(ui) = main_window_weak.upgrade() {
                     ui.global::<AppData>()
                         .set_download_dir(path.to_string_lossy().to_string().into());
                 }
             }
+        }
+    });
+
+    // Update Display Name
+    main_window.global::<Logic>().on_update_display_name({
+        let config = config.clone();
+        move |name| {
+            let mut cfg = config.lock().unwrap();
+            cfg.display_name = name.to_string();
+            let _ = cfg.save();
+        }
+    });
+
+    // Toggle Overwrite
+    main_window.global::<Logic>().on_toggle_overwrite_dest({
+        let config = config.clone();
+        move |val| {
+            let mut cfg = config.lock().unwrap();
+            cfg.overwrite_dest = val;
+            let _ = cfg.save();
         }
     });
 
