@@ -1,50 +1,48 @@
 import { ListView } from "std-widgets.slint";
 import { Transfer } from "types.slint";
 import { ProgressBar, ZenButton } from "components.slint";
+import { Theme, AppData, Logic } from "globals.slint";
 
 export component TransfersView inherits VerticalLayout {
-    in property <[Transfer]> active_transfers: [];
-    callback cancel_transfer(int);
-
-    padding: 24px; // Zen spacing
+    padding: 24px;
     spacing: 16px;
 
     Text {
         text: "Active Transfers Monitor";
         font-size: 16px;
         font-weight: 800;
-        color: #c0caf5;
+        color: Theme.text-primary;
     }
 
-    if active_transfers.length == 0: VerticalLayout {
+    if AppData.active_transfers.length == 0: VerticalLayout {
         alignment: center;
         height: 220px;
         spacing: 12px;
         Text {
             text: "No active file transfers.";
-            color: #565f89;
+            color: Theme.text-secondary;
             horizontal-alignment: center;
             font-size: 14px;
         }
 
         Text {
             text: "Choose a device on the 'Send' tab to start transferring files.";
-            color: #565f89;
+            color: Theme.text-secondary;
             font-size: 12px;
             horizontal-alignment: center;
         }
     }
 
-    if active_transfers.length > 0: ListView {
+    if AppData.active_transfers.length > 0: ListView {
         height: 380px;
-        for transfer in active_transfers: VerticalLayout {
+        for transfer in AppData.active_transfers: VerticalLayout {
             padding-bottom: 12px;
 
             Rectangle {
-                background: #1a1b26; // Void card background
+                background: Theme.background; // Void card background
                 border-radius: 12px;
                 border-width: 1px;
-                border-color: #292e42;
+                border-color: Theme.surface-hover;
 
                 VerticalLayout {
                     padding: 16px;
@@ -64,9 +62,9 @@ export component TransfersView inherits VerticalLayout {
                         ZenButton {
                             text: "Cancel";
                             width: 72px;
-                            height: 32px; // Slightly smaller height for table action
+                            height: 32px;
                             clicked => {
-                                cancel_transfer(transfer.id);
+                                Logic.cancel_transfer(transfer.id);
                             }
                         }
                     }
@@ -80,14 +78,14 @@ export component TransfersView inherits VerticalLayout {
                         alignment: space-between;
                         Text {
                             text: transfer.bytes_transferred + " / " + transfer.total_bytes;
-                            color: #565f89;
+                            color: Theme.text-secondary;
                             font-size: 12px;
                             font-weight: 600;
                         }
 
                         Text {
                             text: transfer.speed_eta;
-                            color: #565f89;
+                            color: Theme.text-secondary;
                             font-size: 12px;
                             font-weight: 600;
                         }

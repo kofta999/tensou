@@ -1,49 +1,23 @@
-import { Button } from "std-widgets.slint";
 import { Device, Transfer } from "types.slint";
-import { TabButton } from "components.slint";
+import { TabButton, ZenButton } from "components.slint";
 import { SendView } from "send-view.slint";
 import { TransfersView } from "transfers-view.slint";
 import { SettingsView } from "settings-view.slint";
+import { Theme, AppData, Logic } from "globals.slint";
 
-export { Device, Transfer }
+export { Device, Transfer, AppData, Logic }
 
 export component MainWindow inherits Window {
     title: "Tensou";
     width: 480px;
     height: 640px;
-    background: #1a1b26; // Tokyo Night Void Base
-
-    // Properties for communication with Rust
-    in property <[Device]> devices: [];
-    in property <[Transfer]> active_transfers: [];
-    in property <string> download_dir: "/home/kofta/Downloads/Tensou";
-    in property <int> listen_port: 6967;
-    in property <string> direct_ip: "";
-
-    // Consent Request popup properties
-    in-out property <bool> has_consent_request: false;
-    in-out property <int> consent_transfer_id: 0;
-    in-out property <string> consent_peer_ip: "";
-    in-out property <string> consent_job_name: "";
+    background: Theme.background;
 
     // Active Screen properties
     in-out property <int> current_tab: 0; // 0 = Send, 1 = Transfers, 2 = Settings
-    in-out property <bool> showing_device_actions: false;
-    in-out property <Device> selected_device;
-
-    // Callbacks to Rust
-    callback change_tab(int);
-    callback direct_send_file(string);
-    callback direct_send_folder(string);
-    callback device_send_file(Device);
-    callback device_send_folder(Device);
-    callback cancel_transfer(int);
-    callback change_download_dir();
-    callback consent_response(int, bool); // transfer_id, accepted
-    callback direct_ip_changed(string);
 
     VerticalLayout {
-        padding: 24px; // Zen spacing
+        padding: 24px;
         spacing: 20px;
 
         // Header
@@ -51,17 +25,16 @@ export component MainWindow inherits Window {
             alignment: start;
             spacing: 12px;
 
-            // Neon-Cyan "送" badge icon
             Rectangle {
                 width: 36px;
                 height: 36px;
-                background: #7dcfff; // Neo-Cyan
+                background: Theme.secondary;
                 border-radius: 8px;
                 Text {
                     text: "送";
                     font-size: 20px;
                     font-weight: 900;
-                    color: #1a1b26; // Dark text on cyan badge
+                    color: Theme.text-dark;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -73,7 +46,7 @@ export component MainWindow inherits Window {
                     text: "Tensou";
                     font-size: 22px;
                     font-weight: 800;
-                    color: #c0caf5; // Primary white/slate-blue
+                    color: Theme.text-primary;
                 }
             }
         }
@@ -88,16 +61,16 @@ export component MainWindow inherits Window {
                 active: current_tab == 0;
                 clicked => {
                     current_tab = 0;
-                    change_tab(0);
+                    Logic.change_tab(0);
                 }
             }
 
             TabButton {
-                text: active_transfers.length > 0 ? "Transfers (" + active_transfers.length + ")" : "Transfers";
+                text: AppData.active_transfers.length > 0 ? "Transfers (" + AppData.active_transfers.length + ")" : "Transfers";
                 active: current_tab == 1;
                 clicked => {
                     current_tab = 1;
-                    change_tab(1);
+                    Logic.change_tab(1);
                 }
             }
 
@@ -106,74 +79,37 @@ export component MainWindow inherits Window {
                 active: current_tab == 2;
                 clicked => {
                     current_tab = 2;
-                    change_tab(2);
+                    Logic.change_tab(2);
                 }
             }
         }
 
         // Content Area
         Rectangle {
-            background: #24283b; // Lighter surface card
-            border-radius: 12px; // Softer corners
-            border-width: 0px;   // Remove harsh borders
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 0px;
             clip: true;
 
-            // Tab 0: Send / Devices screen
-            if current_tab == 0: SendView {
-                devices: devices;
-                direct_ip: direct_ip;
-                showing_device_actions: showing_device_actions;
-                selected_device: selected_device;
-
-                direct_ip_changed(text) => {
-                    direct_ip_changed(text);
-                }
-                direct_send_file(ip) => {
-                    direct_send_file(ip);
-                }
-                direct_send_folder(ip) => {
-                    direct_send_folder(ip);
-                }
-                device_send_file(dev) => {
-                    device_send_file(dev);
-                }
-                device_send_folder(dev) => {
-                    device_send_folder(dev);
-                }
-            }
-
-            // Tab 1: Transfers monitor
-            if current_tab == 1: TransfersView {
-                active_transfers: active_transfers;
-                cancel_transfer(id) => {
-                    cancel_transfer(id);
-                }
-            }
-
-            // Tab 2: Settings screen
-            if current_tab == 2: SettingsView {
-                download_dir: download_dir;
-                listen_port: listen_port;
-                change_download_dir() => {
-                    change_download_dir();
-                }
-            }
+            if current_tab == 0: SendView { }
+            if current_tab == 1: TransfersView { }
+            if current_tab == 2: SettingsView { }
         }
     }
 
-    // Consent Modal popup overlay with Tokyo Night base backdrop
-    if has_consent_request: Rectangle {
-        background: rgba(26, 27, 38, 0.85); // Inky overlay
+    // Consent Modal popup overlay with Theme styling
+    if AppData.has_consent_request: Rectangle {
+        background: rgba(26, 27, 38, 0.85);
         width: 100%;
         height: 100%;
 
         Rectangle {
             width: 320px;
             height: 240px;
-            background: #24283b; // Surface card
+            background: Theme.surface;
             border-radius: 12px;
             border-width: 2px;
-            border-color: #f7768e; // Sakura Pink warning/consent border
+            border-color: Theme.primary;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
 
@@ -186,23 +122,23 @@ export component MainWindow inherits Window {
                     text: "Incoming Transfer Request";
                     font-size: 18px;
                     font-weight: 800;
-                    color: #f7768e; // Sakura Pink
+                    color: Theme.primary;
                     horizontal-alignment: center;
                 }
 
                 Text {
-                    text: consent_peer_ip + " wants to send you:";
-                    color: #565f89; // Secondary/dimmed
+                    text: AppData.consent_peer_ip + " wants to send you:";
+                    color: Theme.text-secondary;
                     font-size: 13px;
                     horizontal-alignment: center;
                     wrap: word-wrap;
                 }
 
                 Text {
-                    text: consent_job_name;
+                    text: AppData.consent_job_name;
                     font-size: 16px;
                     font-weight: 700;
-                    color: #ffffff; // White highlight
+                    color: #ffffff;
                     horizontal-alignment: center;
                     wrap: word-wrap;
                     overflow: elide;
@@ -213,21 +149,23 @@ export component MainWindow inherits Window {
                     spacing: 16px;
                     alignment: center;
 
-                    Button {
+                    ZenButton {
                         text: "Accept";
+                        primary: true;
                         width: 110px;
                         clicked => {
-                            consent_response(consent_transfer_id, true);
-                            has_consent_request = false;
+                            Logic.consent_response(AppData.consent_transfer_id, true);
+                            AppData.has_consent_request = false;
                         }
                     }
 
-                    Button {
+                    ZenButton {
                         text: "Decline";
+                        primary: false;
                         width: 110px;
                         clicked => {
-                            consent_response(consent_transfer_id, false);
-                            has_consent_request = false;
+                            Logic.consent_response(AppData.consent_transfer_id, false);
+                            AppData.has_consent_request = false;
                         }
                     }
                 }

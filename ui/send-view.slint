@@ -1,49 +1,43 @@
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Device } from "types.slint";
 import { DeviceCard, ZenButton } from "components.slint";
+import { Theme, AppData, Logic } from "globals.slint";
 
 export component SendView inherits VerticalLayout {
-    in property <[Device]> devices: [];
-    in property <string> direct_ip: "";
+    // Purely local UI state
     in-out property <bool> showing_device_actions: false;
     in-out property <Device> selected_device;
 
-    callback direct_ip_changed(string);
-    callback direct_send_file(string);
-    callback direct_send_folder(string);
-    callback device_send_file(Device);
-    callback device_send_folder(Device);
-
     padding: 24px;
     spacing: 20px;
-
-    if !showing_device_actions: VerticalLayout {
+    
+    if !showing_device_actions : VerticalLayout {
         spacing: 18px;
-
+        
         Text {
             text: "Local Network Devices";
             font-size: 16px;
             font-weight: 800;
-            color: #c0caf5;
+            color: Theme.text-primary;
         }
-
-        if devices.length == 0: VerticalLayout {
+        
+        if AppData.devices.length == 0 : VerticalLayout {
             alignment: center;
             height: 120px;
             spacing: 12px;
             Text {
                 text: "Scanning for receivers on the LAN...";
-                color: #565f89;
+                color: Theme.text-secondary;
                 horizontal-alignment: center;
                 font-size: 14px;
             }
         }
-
-        if devices.length > 0: ScrollView {
+        
+        if AppData.devices.length > 0 : ScrollView {
             height: 150px;
             VerticalLayout {
                 spacing: 10px;
-                for dev in devices: DeviceCard {
+                for dev in AppData.devices : DeviceCard {
                     dev: dev;
                     clicked => {
                         selected_device = dev;
@@ -55,33 +49,34 @@ export component SendView inherits VerticalLayout {
 
         Rectangle {
             height: 1px;
-            background: #292e42;
+            background: Theme.surface-hover;
         }
 
         Text {
             text: "Direct Connect";
             font-size: 16px;
             font-weight: 800;
-            color: #c0caf5;
+            color: Theme.text-primary;
         }
-
+        
         VerticalLayout {
             spacing: 10px;
             Text {
                 text: "Target Device Address:";
-                color: #565f89;
+                color: Theme.text-secondary;
                 font-size: 13px;
                 font-weight: 600;
             }
-
+            
             ip_input := LineEdit {
-                text: direct_ip;
+                text: AppData.direct_ip;
                 placeholder-text: "192.168.1.100:6967";
                 edited(text) => {
-                    direct_ip_changed(text);
+                    AppData.direct_ip = text;
+                    Logic.direct_ip_changed(text);
                 }
             }
-
+            
             HorizontalLayout {
                 spacing: 12px;
                 ZenButton {
@@ -89,25 +84,25 @@ export component SendView inherits VerticalLayout {
                     primary: true;
                     horizontal-stretch: 1;
                     clicked => {
-                        direct_send_file(ip_input.text);
+                        Logic.direct_send_file(ip_input.text);
                     }
                 }
-
+                
                 ZenButton {
                     text: "📁 Send Folder";
                     primary: false;
                     horizontal-stretch: 1;
                     clicked => {
-                        direct_send_folder(ip_input.text);
+                        Logic.direct_send_folder(ip_input.text);
                     }
                 }
             }
         }
     }
-
-    if showing_device_actions: VerticalLayout {
+    
+    if showing_device_actions : VerticalLayout {
         spacing: 20px;
-
+        
         ZenButton {
             text: "← Back to Devices";
             primary: false;
@@ -115,47 +110,46 @@ export component SendView inherits VerticalLayout {
                 showing_device_actions = false;
             }
         }
-
+        
         VerticalLayout {
             spacing: 10px;
             Text {
                 text: "Send Destination";
                 font-size: 14px;
                 font-weight: 700;
-                color: #565f89;
+                color: Theme.text-secondary;
             }
-
+            
             Rectangle {
-                background: #1a1b26;
+                background: Theme.background;
                 border-radius: 12px;
                 border-width: 1px;
-                border-color: #292e42;
+                border-color: Theme.surface-hover;
                 height: 84px;
-
+                
                 HorizontalLayout {
                     padding: 16px;
                     spacing: 18px;
                     alignment: start;
-
+                    
                     Rectangle {
                         width: 52px;
                         height: 52px;
-                        background: #24283b;
+                        background: Theme.surface;
                         border-radius: 26px;
                         border-width: 2px;
-                        border-color: #7dcfff;
+                        border-color: Theme.secondary;
                         y: (parent.height - self.height) / 2;
-
+                        
                         Text {
                             text: selected_device.initials;
-                            color: #7dcfff;
+                            color: Theme.secondary;
                             font-size: 20px;
                             font-weight: 800;
                             horizontal-alignment: center;
                             vertical-alignment: center;
                         }
                     }
-
                     VerticalLayout {
                         alignment: center;
                         Text {
@@ -164,10 +158,9 @@ export component SendView inherits VerticalLayout {
                             font-weight: 800;
                             font-size: 18px;
                         }
-
                         Text {
                             text: selected_device.ip + ":" + selected_device.port;
-                            color: #565f89;
+                            color: Theme.text-secondary;
                             font-size: 13px;
                             font-weight: 500;
                         }
@@ -175,33 +168,32 @@ export component SendView inherits VerticalLayout {
                 }
             }
         }
-
+        
         VerticalLayout {
             spacing: 12px;
             Text {
                 text: "Select Content to Send";
                 font-size: 14px;
                 font-weight: 700;
-                color: #565f89;
+                color: Theme.text-secondary;
             }
-
+            
             HorizontalLayout {
                 spacing: 12px;
                 ZenButton {
-                    text: "📄 Send File 123";
+                    text: "📄 Send File";
                     primary: true;
                     horizontal-stretch: 1;
                     clicked => {
-                        device_send_file(selected_device);
+                        Logic.device_send_file(selected_device);
                     }
                 }
-
                 ZenButton {
                     text: "📁 Send Folder";
                     primary: false;
                     horizontal-stretch: 1;
                     clicked => {
-                        device_send_folder(selected_device);
+                        Logic.device_send_folder(selected_device);
                     }
                 }
             }

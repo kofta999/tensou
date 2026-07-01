@@ -1,72 +1,68 @@
 import { ZenButton } from "components.slint";
+import { Theme, AppData, Logic } from "globals.slint";
 
 export component SettingsView inherits VerticalLayout {
-    in property <string> download_dir: "";
-    in property <int> listen_port: 6967;
-    callback change_download_dir();
-
-    padding: 24px; // Zen spacing
+    padding: 24px;
     spacing: 20px;
-
+    
     Text {
         text: "Application Settings";
         font-size: 16px;
         font-weight: 800;
-        color: #c0caf5;
+        color: Theme.text-primary;
     }
-
+    
     VerticalLayout {
         spacing: 10px;
         Text {
             text: "Download Save Location:";
-            color: #565f89;
+            color: Theme.text-secondary;
             font-size: 13px;
             font-weight: 600;
         }
-
+        
         Rectangle {
-            background: #1a1b26; // Inner void
+            background: Theme.background;
             border-radius: 8px;
             border-width: 1px;
-            border-color: #292e42;
-
+            border-color: Theme.surface-hover;
+            
             VerticalLayout {
                 padding: 12px;
                 Text {
-                    text: download_dir;
+                    text: AppData.download_dir;
                     color: #ffffff;
                     font-weight: 700;
                     wrap: word-wrap;
                 }
             }
         }
-
+        
         ZenButton {
             text: "📁 Change Directory";
             primary: false;
             clicked => {
-                change_download_dir();
+                Logic.change_download_dir();
             }
         }
     }
-
+    
     Rectangle {
         height: 1px;
-        background: #292e42; // Splitter line
+        background: Theme.surface-hover;
     }
-
+    
     HorizontalLayout {
         alignment: space-between;
         Text {
             text: "Listening Network Port:";
-            color: #565f89;
+            color: Theme.text-secondary;
             font-size: 14px;
             font-weight: 600;
         }
-
         Text {
-            text: listen_port;
-            color: #7dcfff; // Neo-Cyan accent highlight
+            text: AppData.listen_port;
+            color: Theme.secondary;
             font-weight: 800;
             font-size: 14px;
         }

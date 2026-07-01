@@ -32,7 +32,7 @@ pub fn run_gui(
     let direct_ip = Arc::new(std::sync::Mutex::new(String::new()));
 
     // Set initial settings on the window
-    main_window.set_download_dir(
+    main_window.global::<AppData>().set_download_dir(
         download_dir
             .lock()
             .unwrap()
@@ -40,15 +40,15 @@ pub fn run_gui(
             .to_string()
             .into(),
     );
-    main_window.set_listen_port(6967);
+    main_window.global::<AppData>().set_listen_port(6967);
 
     // Create a mutable model and attach it to the UI immediately
     let initial_transfers_model = std::rc::Rc::new(slint::VecModel::<Transfer>::default());
-    main_window.set_active_transfers(initial_transfers_model.clone().into());
+    main_window.global::<AppData>().set_active_transfers(initial_transfers_model.clone().into());
 
     // Setup callbacks
     // 1. Direct Connect changes
-    main_window.on_direct_ip_changed({
+    main_window.global::<Logic>().on_direct_ip_changed({
         let direct_ip = direct_ip.clone();
         move |text| {
             *direct_ip.lock().unwrap() = text.to_string();
@@ -56,7 +56,7 @@ pub fn run_gui(
     });
 
     // 2. Direct Send File
-    main_window.on_direct_send_file({
+    main_window.global::<Logic>().on_direct_send_file({
         let event_tx = event_tx.clone();
         move |ip_str| {
             if let Ok(target_addr) = ip_str.parse::<SocketAddr>() {
@@ -73,7 +73,7 @@ pub fn run_gui(
     });
 
     // 3. Direct Send Folder
-    main_window.on_direct_send_folder({
+    main_window.global::<Logic>().on_direct_send_folder({
         let event_tx = event_tx.clone();
         move |ip_str| {
             if let Ok(target_addr) = ip_str.parse::<SocketAddr>() {
@@ -90,7 +90,7 @@ pub fn run_gui(
     });
 
     // 4. Device Send File
-    main_window.on_device_send_file({
+    main_window.global::<Logic>().on_device_send_file({
         let event_tx = event_tx.clone();
         move |dev| {
             let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
@@ -104,7 +104,7 @@ pub fn run_gui(
     });
 
     // 5. Device Send Folder
-    main_window.on_device_send_folder({
+    main_window.global::<Logic>().on_device_send_folder({
         let event_tx = event_tx.clone();
         move |dev| {
             let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
@@ -118,7 +118,7 @@ pub fn run_gui(
     });
 
     // 6. Change Download Directory
-    main_window.on_change_download_dir({
+    main_window.global::<Logic>().on_change_download_dir({
         let main_window_weak = main_window.as_weak();
         let download_dir = download_dir.clone();
         move || {
@@ -128,14 +128,14 @@ pub fn run_gui(
             {
                 *download_dir.lock().unwrap() = path.clone();
                 if let Some(ui) = main_window_weak.upgrade() {
-                    ui.set_download_dir(path.to_string_lossy().to_string().into());
+                    ui.global::<AppData>().set_download_dir(path.to_string_lossy().to_string().into());
                 }
             }
         }
     });
 
     // 7. Consent Response
-    main_window.on_consent_response({
+    main_window.global::<Logic>().on_consent_response({
         let consent_registry = consent_registry.clone();
         let main_window_weak = main_window.as_weak();
         move |transfer_id, accepted| {
@@ -145,7 +145,7 @@ pub fn run_gui(
                 consent_registry.reject(transfer_id as u32);
             }
             if let Some(ui) = main_window_weak.upgrade() {
-                ui.set_has_consent_request(false);
+                ui.global::<AppData>().set_has_consent_request(false);
             }
         }
     });
@@ -183,7 +183,7 @@ pub fn run_gui(
 
             let _ = main_window_weak_devices.upgrade_in_event_loop(move |ui| {
                 let model = rc_model_from_vec(slint_devices);
-                ui.set_devices(model.into());
+                ui.global::<AppData>().set_devices(model.into());
             });
         }
     });
@@ -275,7 +275,7 @@ pub fn run_gui(
 
             let _ = main_window_weak_transfers.upgrade_in_event_loop(move |ui| {
                 // 1. Get the current model from the UI
-                let current_model = ui.get_active_transfers();
+                let current_model = ui.global::<AppData>().get_active_transfers();
                 
                 // 2. Downcast it to the mutable VecModel we created earlier
                 if let Some(vec_model) = current_model.as_any().downcast_ref::<slint::VecModel<Transfer>>() {
@@ -293,10 +293,10 @@ pub fn run_gui(
                 }
 
                 if let Some((has_req, id, ip, name)) = consent_to_set {
-                    ui.set_has_consent_request(has_req);
-                    ui.set_consent_transfer_id(id as i32);
-                    ui.set_consent_peer_ip(ip.into());
-                    ui.set_consent_job_name(name.into());
+                    ui.global::<AppData>().set_has_consent_request(has_req);
+                    ui.global::<AppData>().set_consent_transfer_id(id as i32);
+                    ui.global::<AppData>().set_consent_peer_ip(ip.into());
+                    ui.global::<AppData>().set_consent_job_name(name.into());
                 }
             });
         }
@@ -304,7 +304,7 @@ pub fn run_gui(
 
     // 8. Cancel Transfer
     let transfers_clone = local_transfers.clone();
-    main_window.on_cancel_transfer(move |transfer_id| {
+    main_window.global::<Logic>().on_cancel_transfer(move |transfer_id| {
         println!("Cancel clicked for transfer: {}", transfer_id);
         let transfers = transfers_clone.lock().unwrap();
         if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {

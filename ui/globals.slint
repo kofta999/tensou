@@ -1,0 +1,39 @@
+import { Device, Transfer } from "types.slint";
+
+export global Theme {
+    out property <color> background: #1a1b26;
+    out property <color> surface: #24283b;
+    out property <color> surface-hover: #292e42;
+    out property <color> primary: #f7768e;      // Sakura Pink
+    out property <color> secondary: #7dcfff;    // Neo-Cyan
+    out property <color> success: #9ece6a;      // Matcha Green
+    out property <color> text-primary: #c0caf5;  // Primary text
+    out property <color> text-secondary: #565f89; // Dimmed text
+    out property <color> text-dark: #1a1b26;     // Dark text for light badges
+}
+
+export global AppData {
+    in property <[Device]> devices: [];
+    in property <[Transfer]> active_transfers: [];
+    in property <string> download_dir: "/home/kofta/Downloads/Tensou";
+    in property <int> listen_port: 6967;
+    in-out property <string> direct_ip: "";
+
+    // Consent request popup state
+    in-out property <bool> has_consent_request: false;
+    in-out property <int> consent_transfer_id: 0;
+    in-out property <string> consent_peer_ip: "";
+    in-out property <string> consent_job_name: "";
+}
+
+export global Logic {
+    callback change_tab(int);
+    callback direct_send_file(string);
+    callback direct_send_folder(string);
+    callback device_send_file(Device);
+    callback device_send_folder(Device);
+    callback cancel_transfer(int);
+    callback change_download_dir();
+    callback consent_response(int, bool); // transfer_id, accepted
+    callback direct_ip_changed(string);
+}

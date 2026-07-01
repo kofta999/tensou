@@ -1,4 +1,5 @@
 import { Device } from "types.slint";
+import { Theme } from "globals.slint";
 
 export component ProgressBar inherits Rectangle {
     in property <float> progress: 0.0;
@@ -8,7 +9,7 @@ export component ProgressBar inherits Rectangle {
     background: #16161e; // Deepest void background
     border-radius: 9px;
     border-width: 1px;
-    border-color: #292e42;
+    border-color: Theme.surface-hover;
     clip: true;
 
     // Dynamic progress fill with Tokyo Night colors
@@ -17,7 +18,7 @@ export component ProgressBar inherits Rectangle {
         width: parent.width * progress;
         height: parent.height;
         // Sakura Pink for sending, Matcha Green for receiving
-        background: is_sender ? #f7768e : #9ece6a;
+        background: is_sender ? Theme.primary : Theme.success;
         border-radius: 9px;
 
         animate width {
@@ -28,7 +29,7 @@ export component ProgressBar inherits Rectangle {
 
     Text {
         text: Math.round(progress * 100) + "%";
-        color: #c0caf5; // Muted white
+        color: Theme.text-primary;
         font-size: 11px;
         font-weight: 800;
         horizontal-alignment: center;
@@ -40,13 +41,13 @@ export component DeviceCard inherits Rectangle {
     in property <Device> dev;
     callback clicked();
 
-    height: 68px; // Reduced height to be more compact
-    background: touch.has-hover ? #292e42 : #24283b; // Subtle surface elevation
+    height: 68px; // Compact height
+    background: touch.has-hover ? Theme.surface-hover : Theme.surface; // Subtle surface elevation
     border-radius: 12px;
 
     // Glowing border effect on hover
     border-width: 2px;
-    border-color: touch.has-hover ? #7dcfff : transparent;
+    border-color: touch.has-hover ? Theme.secondary : transparent;
 
     animate background { duration: 200ms; }
     animate border-color {
@@ -64,19 +65,19 @@ export component DeviceCard inherits Rectangle {
         Rectangle {
             width: 40px;
             height: 40px;
-            background: #1a1b26; // Inner void
+            background: Theme.background; // Inner void
             border-radius: 20px;
             border-width: 2px;
-            border-color: #7dcfff; // Cyan outline
+            border-color: Theme.secondary; // Cyan outline
             y: (parent.height - self.height) / 2;
 
             // Subtle neon glow
-            drop-shadow-color: rgba(125, 207, 255, 0.4);
+            drop-shadow-color: Theme.secondary.transparentize(0.6);
             drop-shadow-blur: 8px;
 
             Text {
                 text: dev.initials;
-                color: #7dcfff;
+                color: Theme.secondary;
                 font-size: 16px;
                 font-weight: 800;
                 horizontal-alignment: center;
@@ -89,7 +90,7 @@ export component DeviceCard inherits Rectangle {
             spacing: 2px;
             Text {
                 text: dev.hostname;
-                color: touch.has-hover ? #ffffff : #c0caf5;
+                color: touch.has-hover ? #ffffff : Theme.text-primary;
                 font-weight: 800;
                 font-size: 16px;
                 animate color { duration: 200ms; }
@@ -97,7 +98,7 @@ export component DeviceCard inherits Rectangle {
 
             Text {
                 text: dev.ip + ":" + dev.port;
-                color: #565f89; // Dimmed text
+                color: Theme.text-secondary; // Dimmed text
                 font-size: 12px;
                 font-weight: 500;
             }
@@ -105,6 +106,7 @@ export component DeviceCard inherits Rectangle {
     }
 
     touch := TouchArea {
+        mouse-cursor: pointer; // Visual cursor feedback
         clicked => {
             root.clicked();
         }
@@ -125,7 +127,7 @@ export component TabButton inherits Rectangle {
         Text {
             text: root.text;
             // Sakura pink for active, muted slate for inactive
-            color: active ? #f7768e : (touch.has-hover ? #c0caf5 : #565f89);
+            color: active ? Theme.primary : (touch.has-hover ? Theme.text-primary : Theme.text-secondary);
             font-weight: active ? 800 : 600;
             font-size: 15px;
             horizontal-alignment: center;
@@ -137,7 +139,7 @@ export component TabButton inherits Rectangle {
         Rectangle {
             height: 3px;
             width: active ? 100% : 0%;
-            background: #f7768e;
+            background: Theme.primary;
             border-radius: 2px;
             horizontal-stretch: 0;
 
@@ -149,6 +151,7 @@ export component TabButton inherits Rectangle {
     }
 
     touch := TouchArea {
+        mouse-cursor: pointer; // Visual cursor feedback
         clicked => {
             root.clicked();
         }
@@ -161,12 +164,12 @@ export component ZenButton inherits Rectangle {
     callback clicked();
 
     height: 44px;
-    background: primary ? (touch.has-hover ? #ff9eaf : @linear-gradient(135deg, #f7768e 0%, #de5d83 100%)) : (touch.has-hover ? #3b4261 : #292e42);
+    background: primary ? (touch.has-hover ? Theme.primary.mix(#ffffff, 20%) : @linear-gradient(135deg, Theme.primary 0%, Theme.primary.darker(0.3) 100%)) : (touch.has-hover ? Theme.surface-hover : Theme.surface);
 
     // Sharp corners by default, rounded on hover
-    border-radius: touch.has-hover ? 8px : 0px;
+    border-radius: 8px;
     border-width: primary ? 0px : 1px;
-    border-color: primary ? transparent : (touch.has-hover ? #7dcfff : #3b4261);
+    border-color: primary ? transparent : (touch.has-hover ? Theme.secondary : Theme.surface-hover);
 
     animate background { duration: 150ms; }
     animate border-color { duration: 150ms; }
@@ -174,7 +177,7 @@ export component ZenButton inherits Rectangle {
 
     Text {
         text: root.text;
-        color: primary ? #1a1b26 : #c0caf5;
+        color: primary ? Theme.text-dark : Theme.text-primary;
         font-weight: 800;
         font-size: 14px;
         horizontal-alignment: center;
@@ -182,6 +185,7 @@ export component ZenButton inherits Rectangle {
     }
 
     touch := TouchArea {
+        mouse-cursor: pointer; // Visual cursor feedback
         clicked => {
             root.clicked();
         }
