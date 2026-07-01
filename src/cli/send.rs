@@ -1,4 +1,5 @@
 use crate::cli::create_transfer_pb;
+use crate::config::Config;
 use crate::{
     discovery::{self, DiscoveryEvent},
     net::Sender,
@@ -49,8 +50,10 @@ pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result
             spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
             let (tx, mut rx) = mpsc::channel::<DiscoveryEvent>(10);
+            let config = Config::load_or_create();
+
             tokio::spawn(async move {
-                let _ = discovery::scan_for_receivers(tx).await;
+                let _ = discovery::scan_for_receivers(tx, &config.device_uuid).await;
             });
 
             let mut devices = Vec::new();
@@ -65,7 +68,7 @@ pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result
                                 println!("Found receivers (type a number to connect):\n");
                             }
                             devices.push(device.addr);
-                            println!("  [{}] {} ({})", devices.len(), device.hostname, device.addr);
+                            println!("  [{}] {} ({})", devices.len(), device.display_name, device.addr);
                         }
                     }
 

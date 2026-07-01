@@ -22,17 +22,24 @@ pub fn spawn_discovery(
             let mut devices = local_devices.lock().unwrap();
             match event {
                 DiscoveryEvent::DeviceFound(discovered_device) => {
+                    println!("Discovered device: name={}, uuid={}, os={}", discovered_device.display_name, discovered_device.device_uuid, discovered_device.os_type);
+                    // Check if we already have this device to prevent duplicate entries
+                    devices.retain(|v| v.device_uuid != discovered_device.device_uuid);
                     devices.push(discovered_device.into());
                 }
                 DiscoveryEvent::DeviceLost(fullname) => {
-                    devices.retain(|v| v.fullname != fullname);
+                    // Extract display_name from fullname to match lost device
+                    let display_name = fullname.split('.').next().unwrap_or(&fullname);
+                    devices.retain(|v| v.display_name != display_name);
                 }
             }
 
             let slint_devices: Vec<Device> = devices
                 .iter()
                 .map(|d| Device {
-                    hostname: d.hostname.clone().into(),
+                    display_name: d.display_name.clone().into(),
+                    device_uuid: d.device_uuid.clone().into(),
+                    os_type: d.os_type.clone().into(),
                     ip: d.ip.clone().into(),
                     port: d.port as i32,
                     initials: d.initials.clone().into(),

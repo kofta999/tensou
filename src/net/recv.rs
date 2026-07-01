@@ -26,11 +26,8 @@ pub struct ReceiverDaemon {
 impl ReceiverDaemon {
     pub fn new(bind_addr: SocketAddr, config: Config) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
-
         let endpoint = Endpoint::server(server_config, bind_addr)?;
-        let actual_port = endpoint.local_addr()?.port();
-
-        let _discovery_daemon = discovery::register_service(actual_port)?;
+        let _discovery_daemon = discovery::register_service(&config)?;
 
         Ok(Self {
             endpoint,

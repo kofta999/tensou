@@ -63,11 +63,14 @@ pub async fn run() -> anyhow::Result<()> {
         Some(Commands::Receive { port, output }) => recieve::run(port, output).await,
         None => {
             println!("Launching Tensou GUI...");
+            let config = Config::load_or_create();
+            let config_clone = config.clone();
+            let device_uuid = config.device_uuid.clone();
 
             // For detecting devices
             let (tx, devices_rx) = mpsc::channel::<DiscoveryEvent>(10);
             tokio::spawn(async move {
-                let _ = discovery::scan_for_receivers(tx).await;
+                let _ = discovery::scan_for_receivers(tx, &device_uuid).await;
             });
 
             // Create channels for GUI events
@@ -81,16 +84,10 @@ pub async fn run() -> anyhow::Result<()> {
             let daemon_consent_registry = consent_registry.clone();
 
             tokio::spawn(async move {
-                let target_dir = resolve_save_directory(None).unwrap(); // Default ~/Downloads/Tensou
-                let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), SERVER_PORT);
+                let bind_addr =
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), config.listen_port);
 
-                if let Ok(daemon) = ReceiverDaemon::new(
-                    bind_addr,
-                    Config {
-                        target_dir,
-                        overwrite_dest: false,
-                    },
-                ) {
+                if let Ok(daemon) = ReceiverDaemon::new(bind_addr, config_clone) {
                     let cancel_token = CancellationToken::new();
 
                     let observer = Arc::new(GuiTransferObserver {
@@ -108,7 +105,7 @@ pub async fn run() -> anyhow::Result<()> {
                 }
             });
 
-            crate::gui::run_gui(devices_rx, event_tx, event_rx, consent_registry)?;
+            crate::gui::run_gui(devices_rx, event_tx, event_rx, consent_registry, config)?;
             Ok(())
         }
     }

@@ -27,6 +27,8 @@ async-trait = "0.1.89"
 tokio-util = "0.7.18"
 slint = { version = "1.17.0", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software", "software-renderer-path"] }
 rfd = "0.17.2"
+toml = "1.1.2"
+uuid = { version = "1.23.4", features = ["v4"] }
 
 [build-dependencies]
 slint-build = "1.17.0"

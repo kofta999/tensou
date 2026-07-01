@@ -95,13 +95,10 @@ pub async fn run(port: u16, output: Option<PathBuf>) -> anyhow::Result<()> {
     let target_dir = resolve_save_directory(output)?;
     let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
-    let daemon = ReceiverDaemon::new(
-        bind_addr,
-        Config {
-            target_dir: target_dir.clone(),
-            overwrite_dest: false,
-        },
-    )?;
+    let mut config = Config::load_or_create();
+    config.target_dir = target_dir.clone();
+
+    let daemon = ReceiverDaemon::new(bind_addr, config)?;
 
     println!("Listening on port {}", daemon.local_addr()?.port());
     println!("Saving files to: {}", target_dir.display());

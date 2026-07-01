@@ -152,11 +152,25 @@ export component SendView inherits VerticalLayout {
                     }
                     VerticalLayout {
                         alignment: center;
-                        Text {
-                            text: selected_device.hostname;
-                            color: #ffffff;
-                            font-weight: 800;
-                            font-size: 18px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Text {
+                                text: selected_device.display_name;
+                                color: #ffffff;
+                                font-weight: 800;
+                                font-size: 18px;
+                            }
+                            Image {
+                                source: selected_device.os_type == "linux" ? @image-url("icons/linux.svg") 
+                                      : (selected_device.os_type == "windows" ? @image-url("icons/windows.svg") 
+                                      : (selected_device.os_type == "macos" ? @image-url("icons/macos.svg") 
+                                      : @image-url("icons/linux.svg")));
+                                width: 18px;
+                                height: 18px;
+                                colorize: Theme.text-primary;
+                                y: (parent.height - self.height) / 2;
+                            }
                         }
                         Text {
                             text: selected_device.ip + ":" + selected_device.port;

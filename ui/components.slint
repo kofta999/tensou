@@ -88,12 +88,26 @@ export component DeviceCard inherits Rectangle {
         VerticalLayout {
             alignment: center;
             spacing: 2px;
-            Text {
-                text: dev.hostname;
-                color: touch.has-hover ? #ffffff : Theme.text-primary;
-                font-weight: 800;
-                font-size: 16px;
-                animate color { duration: 200ms; }
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+
+                Text {
+                    text: dev.display_name;
+                    color: touch.has-hover ? #ffffff : Theme.text-primary;
+                    font-weight: 800;
+                    font-size: 16px;
+                    animate color { duration: 200ms; }
+                }
+
+                Image {
+                    source: dev.os_type == "linux" ? @image-url("icons/linux.svg") : (dev.os_type == "windows" ? @image-url("icons/windows.svg") : (dev.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg")));
+                    width: 16px;
+                    height: 16px;
+                    colorize: touch.has-hover ? #ffffff : Theme.text-secondary;
+                    y: (parent.height - self.height) / 2;
+                    animate colorize { duration: 200ms; }
+                }
             }
 
             Text {

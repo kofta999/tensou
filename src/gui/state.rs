@@ -35,8 +35,9 @@ impl Into<usize> for GuiScreen {
 
 #[derive(Clone, Debug)]
 pub struct GuiDevice {
-    pub hostname: String,
-    pub fullname: String,
+    pub display_name: String,
+    pub device_uuid: String,
+    pub os_type: String,
     pub ip: String,
     pub port: u16,
     pub initials: String,
@@ -47,7 +48,7 @@ impl From<DiscoveredDevice> for GuiDevice {
         let ip = value.addr.ip();
         let port = value.addr.port();
         let initials = value
-            .hostname
+            .display_name
             .chars()
             .take(2)
             .collect::<String>()
@@ -58,8 +59,9 @@ impl From<DiscoveredDevice> for GuiDevice {
             initials
         };
         Self {
-            hostname: value.hostname,
-            fullname: value.fullname,
+            display_name: value.display_name,
+            device_uuid: value.device_uuid,
+            os_type: value.os_type,
             initials,
             ip: ip.to_string(),
             port,

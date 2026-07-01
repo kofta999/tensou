@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::discovery::DiscoveryEvent;
 use crate::gui::state::{ConsentRegistry, GuiEvent, GuiTransfer};
 use crate::gui::{background, callbacks};
@@ -12,6 +13,7 @@ pub fn run_gui(
     event_tx: mpsc::UnboundedSender<GuiEvent>,
     event_rx: mpsc::UnboundedReceiver<GuiEvent>,
     consent_registry: Arc<ConsentRegistry>,
+    _config: Config,
 ) -> anyhow::Result<()> {
     let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
