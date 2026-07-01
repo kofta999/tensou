@@ -6,8 +6,8 @@ pub use send::Sender;
 
 #[cfg(test)]
 mod tests {
+    use crate::config;
     use crate::protocol::{TransferConsentHandler, TransferObserver};
-    use crate::{SERVER_PORT, config};
     use async_trait::async_trait;
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -43,13 +43,11 @@ mod tests {
         rand::rng().fill_bytes(&mut buffer);
         std::fs::write(&source_path, &buffer)?;
 
-        let app_daemon = ReceiverDaemon::new(
-            format!("127.0.0.1:{}", SERVER_PORT,).parse()?,
-            config::Config {
-                overwrite_dest: true,
-                target_dir: received_dir.clone(),
-            },
-        )?;
+        let mut config = config::Config::default();
+        config.target_dir = received_dir.clone();
+        config.overwrite_dest = true;
+
+        let app_daemon = ReceiverDaemon::new("127.0.0.1:0".parse()?, config)?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
 
         let server_handle = tokio::spawn(async move {
@@ -65,7 +63,8 @@ mod tests {
         // Give the server 50ms to boot up and start listening
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let client = Sender::connect(bound_server_addr, &source_path).await?;
+        let client =
+            Sender::connect(bound_server_addr, &source_path, CancellationToken::new()).await?;
         client.process_chunks(Arc::new(TestObserver {})).await?;
 
         // Give the server a tiny moment to flush the final commit() to disk
@@ -105,13 +104,10 @@ mod tests {
         let source_path_2_named_same = source_dir_2.path().join("source.bin");
         std::fs::copy(&source_path_2, &source_path_2_named_same)?;
 
-        let app_daemon = ReceiverDaemon::new(
-            format!("127.0.0.1:{}", SERVER_PORT,).parse()?,
-            config::Config {
-                overwrite_dest: false,
-                target_dir: received_dir.clone(),
-            },
-        )?;
+        let mut config = config::Config::default();
+        config.target_dir = received_dir.clone();
+
+        let app_daemon = ReceiverDaemon::new("127.0.0.1:0".parse()?, config)?;
         let bound_server_addr = app_daemon.endpoint.local_addr()?;
 
         let server_handle = tokio::spawn(async move {
@@ -126,11 +122,17 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let client_1 = Sender::connect(bound_server_addr, &source_path_1).await?;
+        let client_1 =
+            Sender::connect(bound_server_addr, &source_path_1, CancellationToken::new()).await?;
         client_1.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let client_2 = Sender::connect(bound_server_addr, &source_path_2_named_same).await?;
+        let client_2 = Sender::connect(
+            bound_server_addr,
+            &source_path_2_named_same,
+            CancellationToken::new(),
+        )
+        .await?;
         client_2.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 

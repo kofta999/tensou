@@ -6,6 +6,7 @@ use bitvec::{bitvec, order::Lsb0, vec::BitVec};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
+use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -226,10 +227,12 @@ pub trait TransferObserver: Send + Sync {
         _peer: SocketAddr,
         _total_bytes: u64,
         _job_name: &str,
+        _cancel_token: CancellationToken,
     ) {
     }
     fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {}
     fn on_transfer_complete(&self, _transfer_id: u32) {}
+    fn on_transfer_failed(&self, _transfer_id: u32, _error: &str) {}
 }
 
 #[async_trait]

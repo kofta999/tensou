@@ -1,0 +1,244 @@
+import { Device } from "types.slint";
+import { Theme } from "globals.slint";
+
+export component ProgressBar inherits Rectangle {
+    in property <float> progress: 0.0;
+    in property <bool> is_sender: true;
+
+    height: 18px;
+    background: #16161e; // Deepest void background
+    border-radius: 9px;
+    border-width: 1px;
+    border-color: Theme.surface-hover;
+    clip: true;
+
+    // Dynamic progress fill with Tokyo Night colors
+    Rectangle {
+        x: 0px;
+        width: parent.width * progress;
+        height: parent.height;
+        // Sakura Pink for sending, Matcha Green for receiving
+        background: is_sender ? Theme.primary : Theme.success;
+        border-radius: 9px;
+
+        animate width {
+            duration: 300ms;
+            easing: ease-out;
+        }
+    }
+
+    Text {
+        text: Math.round(progress * 100) + "%";
+        color: Theme.text-primary;
+        font-size: 11px;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component DeviceCard inherits Rectangle {
+    in property <Device> dev;
+    callback clicked();
+
+    height: 68px; // Compact height
+    background: touch.has-hover ? Theme.surface-hover : Theme.surface; // Subtle surface elevation
+    border-radius: 12px;
+
+    // Glowing border effect on hover
+    border-width: 2px;
+    border-color: touch.has-hover ? Theme.secondary : transparent;
+
+    animate background { duration: 200ms; }
+    animate border-color {
+        duration: 200ms;
+        easing: ease-out;
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 14px;
+        alignment: start;
+
+        // Compact Minimalist Avatar
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            background: Theme.background; // Inner void
+            border-radius: 20px;
+            border-width: 2px;
+            border-color: Theme.secondary; // Cyan outline
+            y: (parent.height - self.height) / 2;
+
+            // Subtle neon glow
+            drop-shadow-color: Theme.secondary.transparentize(0.6);
+            drop-shadow-blur: 8px;
+
+            Text {
+                text: dev.initials;
+                color: Theme.secondary;
+                font-size: 16px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+
+                Text {
+                    text: dev.display_name;
+                    color: touch.has-hover ? #ffffff : Theme.text-primary;
+                    font-weight: 800;
+                    font-size: 16px;
+                    animate color { duration: 200ms; }
+                }
+
+                Image {
+                    source: dev.os_type == "linux" ? @image-url("icons/linux.svg") : (dev.os_type == "windows" ? @image-url("icons/windows.svg") : (dev.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg")));
+                    width: 16px;
+                    height: 16px;
+                    colorize: touch.has-hover ? #ffffff : Theme.text-secondary;
+                    y: (parent.height - self.height) / 2;
+                    animate colorize { duration: 200ms; }
+                }
+            }
+
+            Text {
+                text: dev.ip + ":" + dev.port;
+                color: Theme.text-secondary; // Dimmed text
+                font-size: 12px;
+                font-weight: 500;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer; // Visual cursor feedback
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    background: transparent;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+
+        Text {
+            text: root.text;
+            // Sakura pink for active, muted slate for inactive
+            color: active ? Theme.primary : (touch.has-hover ? Theme.text-primary : Theme.text-secondary);
+            font-weight: active ? 800 : 600;
+            font-size: 15px;
+            horizontal-alignment: center;
+
+            animate color { duration: 250ms; }
+        }
+
+        // Underline indicator (very Japanese-minimalist)
+        Rectangle {
+            height: 3px;
+            width: active ? 100% : 0%;
+            background: Theme.primary;
+            border-radius: 2px;
+            horizontal-stretch: 0;
+
+            animate width {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer; // Visual cursor feedback
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ZenButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 44px;
+    background: primary ? (touch.has-hover ? Theme.primary.mix(#ffffff, 20%) : @linear-gradient(135deg, Theme.primary 0%, Theme.primary.darker(0.3) 100%)) : (touch.has-hover ? Theme.surface-hover : Theme.surface);
+
+    // Sharp corners by default, rounded on hover
+    border-radius: 8px;
+    border-width: primary ? 0px : 1px;
+    border-color: primary ? transparent : (touch.has-hover ? Theme.secondary : Theme.surface-hover);
+
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+    animate border-radius { duration: 150ms; }
+
+    Text {
+        text: root.text;
+        color: primary ? Theme.text-dark : Theme.text-primary;
+        font-weight: 800;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer; // Visual cursor feedback
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ZenToggle inherits Rectangle {
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+
+    width: 48px;
+    height: 24px;
+    background: checked ? Theme.secondary : Theme.surface;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: checked ? Theme.secondary : Theme.surface-hover;
+
+    animate background { duration: 150ms; }
+
+    // Switch thumb
+    Rectangle {
+        x: checked ? parent.width - self.width - 2px : 2px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        background: checked ? Theme.text-dark : Theme.text-primary;
+        border-radius: 10px;
+
+        animate x {
+            duration: 150ms;
+            easing: ease-in-out;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            checked = !checked;
+            toggled(checked);
+        }
+    }
+}

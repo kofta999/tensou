@@ -7,15 +7,21 @@ use crate::{
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
 
 pub struct Sender {
     connection: quinn::Connection,
     sessions: HashMap<FileId, Arc<SendSession>>,
     remote_states: Vec<State>,
+    pub cancel_token: CancellationToken,
 }
 
 impl Sender {
-    pub async fn connect(server_addr: SocketAddr, path: &Path) -> anyhow::Result<Self> {
+    pub async fn connect(
+        server_addr: SocketAddr,
+        path: &Path,
+        cancel_token: CancellationToken,
+    ) -> anyhow::Result<Self> {
         let (manifest, sessions) = ManifestManager::build(path)?;
 
         let client_cfg = Self::configure_client()?;
@@ -43,6 +49,7 @@ impl Sender {
             connection,
             sessions,
             remote_states,
+            cancel_token,
         })
     }
 
@@ -73,32 +80,44 @@ impl Sender {
                 .sessions
                 .get(&file_id)
                 .expect("file_id from flatten() missing in sessions");
+            let token_clone = self.cancel_token.clone();
             let session_clone = session.clone();
             let conn_clone = self.connection.clone();
             let observer_clone = observer.clone();
 
             join_set.spawn(async move {
-                let mut stream = conn_clone.clone().open_uni().await?;
+                tokio::select! {
+                    _ = token_clone.cancelled() => {
+                        return anyhow::Ok(())
+                    }
 
-                // To capture ownership and drop on task finish (to decrease semaphore count)
-                let _permit = permit;
+                    stream_result = async {
+                        let mut stream = conn_clone.clone().open_uni().await?;
+                        // To capture ownership and drop on task finish (to decrease semaphore count)
+                        let _permit = permit;
 
-                let (header, buf) = session_clone.get_chunk(chunk_id).await?;
-                let buf_len = buf.len() as u64;
+                        let (header, buf) = session_clone.get_chunk(chunk_id).await?;
+                        let buf_len = buf.len() as u64;
 
-                // Very lightweight
-                let header_bytes = rmp_serde::to_vec(&header)?;
-                let header_len = header_bytes.len() as u32;
+                        // Very lightweight
+                        let header_bytes = rmp_serde::to_vec(&header)?;
+                        let header_len = header_bytes.len() as u32;
 
-                stream.write_u32(header_len).await?;
-                stream.write_all(&header_bytes).await?;
+                        stream.write_u32(header_len).await?;
+                        stream.write_all(&header_bytes).await?;
 
-                stream.write_all(&buf).await?;
-                drop(buf);
+                        stream.write_all(&buf).await?;
+                        drop(buf);
 
-                stream.finish()?;
+                        stream.finish()?;
 
-                observer_clone.on_chunk_transferred(None, buf_len);
+                        observer_clone.on_chunk_transferred(None, buf_len);
+
+                        return anyhow::Ok(())
+                    } => {
+                        stream_result?
+                    }
+                }
 
                 anyhow::Ok(())
             });
@@ -106,6 +125,12 @@ impl Sender {
 
         while let Some(res) = join_set.join_next().await {
             res??;
+        }
+
+        if self.cancel_token.is_cancelled() {
+            self.connection.close(1u32.into(), b"Cancelled by sender");
+        } else {
+            self.connection.closed().await;
         }
 
         self.connection.closed().await;

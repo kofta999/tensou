@@ -1,0 +1,175 @@
+import { Device, Transfer } from "types.slint";
+import { TabButton, ZenButton } from "components.slint";
+import { SendView } from "send-view.slint";
+import { TransfersView } from "transfers-view.slint";
+import { SettingsView } from "settings-view.slint";
+import { Theme, AppData, Logic } from "globals.slint";
+
+export { Device, Transfer, AppData, Logic }
+
+export component MainWindow inherits Window {
+    title: "Tensou";
+    width: 480px;
+    height: 640px;
+    background: Theme.background;
+
+    // Active Screen properties
+    in-out property <int> current_tab: 0; // 0 = Send, 1 = Transfers, 2 = Settings
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 20px;
+
+        // Header
+        HorizontalLayout {
+            alignment: start;
+            spacing: 12px;
+
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                background: Theme.secondary;
+                border-radius: 8px;
+                Text {
+                    text: "送";
+                    font-size: 20px;
+                    font-weight: 900;
+                    color: Theme.text-dark;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "Tensou";
+                    font-size: 22px;
+                    font-weight: 800;
+                    color: Theme.text-primary;
+                }
+            }
+        }
+
+        // Tab Bar
+        HorizontalLayout {
+            height: 44px;
+            spacing: 12px;
+
+            TabButton {
+                text: "Send (Devices)";
+                active: current_tab == 0;
+                clicked => {
+                    current_tab = 0;
+                    Logic.change_tab(0);
+                }
+            }
+
+            TabButton {
+                text: AppData.active_transfers.length > 0 ? "Transfers (" + AppData.active_transfers.length + ")" : "Transfers";
+                active: current_tab == 1;
+                clicked => {
+                    current_tab = 1;
+                    Logic.change_tab(1);
+                }
+            }
+
+            TabButton {
+                text: "Settings";
+                active: current_tab == 2;
+                clicked => {
+                    current_tab = 2;
+                    Logic.change_tab(2);
+                }
+            }
+        }
+
+        // Content Area
+        Rectangle {
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 0px;
+            clip: true;
+
+            if current_tab == 0: SendView { }
+            if current_tab == 1: TransfersView { }
+            if current_tab == 2: SettingsView { }
+        }
+    }
+
+    // Consent Modal popup overlay with Theme styling
+    if AppData.has_consent_request: Rectangle {
+        background: rgba(26, 27, 38, 0.85);
+        width: 100%;
+        height: 100%;
+
+        Rectangle {
+            width: 320px;
+            height: 240px;
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 2px;
+            border-color: Theme.primary;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                alignment: center;
+
+                Text {
+                    text: "Incoming Transfer Request";
+                    font-size: 18px;
+                    font-weight: 800;
+                    color: Theme.primary;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: AppData.consent_peer_ip + " wants to send you:";
+                    color: Theme.text-secondary;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: AppData.consent_job_name;
+                    font-size: 16px;
+                    font-weight: 700;
+                    color: #ffffff;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    max-height: 48px;
+                }
+
+                HorizontalLayout {
+                    spacing: 16px;
+                    alignment: center;
+
+                    ZenButton {
+                        text: "Accept";
+                        primary: true;
+                        width: 110px;
+                        clicked => {
+                            Logic.consent_response(AppData.consent_transfer_id, true);
+                            AppData.has_consent_request = false;
+                        }
+                    }
+
+                    ZenButton {
+                        text: "Decline";
+                        primary: false;
+                        width: 110px;
+                        clicked => {
+                            Logic.consent_response(AppData.consent_transfer_id, false);
+                            AppData.has_consent_request = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

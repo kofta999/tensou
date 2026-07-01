@@ -26,11 +26,8 @@ pub struct ReceiverDaemon {
 impl ReceiverDaemon {
     pub fn new(bind_addr: SocketAddr, config: Config) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
-
         let endpoint = Endpoint::server(server_config, bind_addr)?;
-        let actual_port = endpoint.local_addr()?.port();
-
-        let _discovery_daemon = discovery::register_service(actual_port)?;
+        let _discovery_daemon = discovery::register_service(&config)?;
 
         Ok(Self {
             endpoint,
@@ -48,7 +45,7 @@ impl ReceiverDaemon {
         &self,
         consent: Arc<dyn TransferConsentHandler>,
         observer: Arc<dyn TransferObserver>,
-        cancel_token: CancellationToken,
+        parent_cancel_token: CancellationToken,
     ) {
         use tokio::task::JoinSet;
         use tokio::time::{Duration, timeout};
@@ -57,7 +54,7 @@ impl ReceiverDaemon {
 
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() =>  {
+                _ = parent_cancel_token.cancelled() =>  {
                     break;
                 }
 
@@ -68,7 +65,7 @@ impl ReceiverDaemon {
                 let observer_clone = observer.clone();
                 let transfer_id = rand::random::<u32>();
                 let consent_clone = consent.clone();
-                let cancel_clone = cancel_token.clone();
+                let conn_cancel_token = parent_cancel_token.child_token();
                 let config_clone = self.config.clone();
 
                 while active_transfers.try_join_next().is_some() {}
@@ -105,7 +102,7 @@ impl ReceiverDaemon {
                                         &target_dir_clone,
                                         observer_clone.clone(),
                                         transfer_id,
-                                        cancel_clone.clone(),
+                                        conn_cancel_token.clone(),
                                         config_clone.overwrite_dest
                                     )
                                     .await?;
@@ -115,18 +112,36 @@ impl ReceiverDaemon {
                                     peer,
                                     receiver.total_size,
                                     &receiver.job_name,
+                                    conn_cancel_token.clone()
                                 );
 
-                                tokio::select! {
-                                    _ = cancel_clone.cancelled() =>  {
-                                        connection.close(0u32.into(),b"Cancelled by receiver");
+                                tokio::select!{
+                                    _ = conn_cancel_token.cancelled() =>  {
+                                        connection.close(0u32.into(), b"Cancelled by receiver");
+                                        observer_clone.on_transfer_failed(transfer_id, "Cancelled locally");
                                     }
 
-                                    res = receiver.process_chunks(cancel_clone.clone()) => {
-                                        res?;
-                                        observer_clone.on_transfer_complete(transfer_id);
+                                    err = connection.closed() => {
+                                        if let quinn::ConnectionError::ApplicationClosed(app_close) = &err {
+                                            let reason = String::from_utf8_lossy(&app_close.reason);
+                                            observer_clone.on_transfer_failed(transfer_id, &reason);
+                                        } else {
+                                            observer_clone.on_transfer_failed(transfer_id, &err.to_string());
+                                        }
                                     }
-                                };
+
+                                    res = receiver.process_chunks(conn_cancel_token.clone()) => {
+                                        match res {
+                                            Ok(_) => {
+                                                observer_clone.on_transfer_complete(transfer_id);
+                                            }
+                                            Err(e) => {
+                                                // Tell the UI about the error instead of silently aborting!
+                                                observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                            }
+                                        }
+                                    }
+                                }
 
                             } else {
                                 println!("Transfer from {} was rejected.", peer);

@@ -16,6 +16,7 @@ pub const QUIC_RECEIVE_WINDOW: u32 = 8 * 1024 * 1024;
 pub const QUIC_STREAM_RECEIVE_WINDOW: u32 = 5 * 1024 * 1024;
 
 pub type FileId = usize;
+pub type TransferId = u32;
 pub type ChunkIndex = u64;
 
 pub mod cli;
@@ -23,6 +24,7 @@ pub mod config;
 pub mod crypto;
 pub mod discovery;
 pub mod disk;
+pub mod gui;
 pub mod net;
 mod protocol;
 
