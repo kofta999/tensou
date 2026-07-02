@@ -40,7 +40,6 @@ impl ReceiverDaemon {
         Ok(self.endpoint.local_addr()?)
     }
 
-    // TODO: target_dir will be replaced by a Config struct later
     pub async fn run(
         &self,
         consent: Arc<dyn TransferConsentHandler>,
@@ -249,8 +248,7 @@ impl PendingTransfer {
         let mut sessions = HashMap::new();
 
         for ins in instructions.into_iter() {
-            // TODO: change that 2
-            let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(2);
+            let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(MAX_CONCURRENT_STREAMS.into());
             let file_id = ins.metadata.file_id;
 
             let payload = IgnitionPayload {

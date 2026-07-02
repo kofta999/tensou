@@ -34,14 +34,6 @@ impl Metadata {
             self.chunk_size
         }
     }
-
-    pub fn resolve_path(&self, base: &Path) -> PathBuf {
-        if self.relative_path.is_empty() {
-            base.to_path_buf()
-        } else {
-            base.join(&self.relative_path)
-        }
-    }
 }
 
 pub fn find_unique_path(path: &Path) -> PathBuf {

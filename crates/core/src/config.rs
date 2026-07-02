@@ -62,8 +62,9 @@ impl Config {
         if let Some(path) = Self::config_path() {
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(config) = toml::from_str::<Config>(&content) {
-                        return config;
+                    match toml::from_str::<Config>(&content) {
+                        Ok(config) => return config,
+                        Err(e) => eprintln!("Config parsing error: {e}"),
                     }
                 }
             }

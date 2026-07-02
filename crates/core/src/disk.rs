@@ -235,7 +235,7 @@ pub struct IgnitionPayload {
 pub struct ReceiveSession {
     tx: ChunkPacketSender,
     ignition: Mutex<Option<IgnitionPayload>>,
-    pub writer_handle: Mutex<Option<task::JoinHandle<anyhow::Result<()>>>>,
+    pub(crate) writer_handle: Mutex<Option<task::JoinHandle<anyhow::Result<()>>>>,
 }
 
 impl ReceiveSession {

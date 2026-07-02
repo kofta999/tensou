@@ -133,8 +133,6 @@ impl Sender {
             self.connection.closed().await;
         }
 
-        self.connection.closed().await;
-
         Ok(())
     }
 
