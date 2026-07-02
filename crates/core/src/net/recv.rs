@@ -304,29 +304,57 @@ impl Receiver {
             let mut chunk_stream = self.connection.accept_uni().await?;
             let sessions_clone = self.sessions.clone();
             let permit = semaphore.clone().acquire_owned().await?;
+            let cancel_clone = cancel_token.clone();
 
             join_set.spawn(async move {
                 // To capture ownership and drop on task finish (to decrease semaphore count)
                 let _permit = permit;
 
-                let header_len = chunk_stream.read_u32().await?;
-                let mut header_buf = vec![0u8; header_len as usize];
-                chunk_stream.read_exact(&mut header_buf).await?;
-                let header: ChunkHeader = rmp_serde::from_slice(&header_buf)?;
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        return anyhow::Ok(());
+                    }
+                    res = async {
+                        let header_len = chunk_stream.read_u32().await?;
+                        let mut header_buf = vec![0u8; header_len as usize];
+                        chunk_stream.read_exact(&mut header_buf).await?;
+                        let header: ChunkHeader = rmp_serde::from_slice(&header_buf)?;
 
-                let data_buf = chunk_stream.read_to_end(CHUNK_SIZE as usize).await?;
+                        let data_buf = chunk_stream.read_to_end(CHUNK_SIZE as usize).await?;
+                        let session = sessions_clone
+                            .get(&header.file_id)
+                            .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?;
 
-                let session = sessions_clone
-                    .get(&header.file_id)
-                    .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?;
+                        session.write_chunk(header, data_buf).await?;
 
-                session.write_chunk(header, data_buf).await?;
+                        anyhow::Ok(())
+                    } => res?
+                };
 
                 anyhow::Ok(())
             });
         }
 
-        join_set.join_all().await;
+        let mut has_error = false;
+
+        // Handle Network errors
+        while let Some(res) = join_set.join_next().await {
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    if !cancel_token.is_cancelled() {
+                        eprintln!("Chunk error: {e:?}");
+                        has_error = true;
+                    }
+                }
+                Err(e) => {
+                    if !cancel_token.is_cancelled() {
+                        eprintln!("Task panic: {e:?}");
+                        has_error = true;
+                    }
+                }
+            }
+        }
 
         let handles: Vec<_> = self
             .sessions
@@ -337,7 +365,7 @@ impl Receiver {
         // To close each tx associated with session
         drop(self.sessions);
 
-        let mut has_error = false;
+        // Handle Disk errors
         for handle in handles {
             match handle.await {
                 Ok(Ok(())) => {}
