@@ -1,4 +1,4 @@
-use crate::disk::SendSession;
+use crate::disk::{SendSession, TransferStaging};
 use crate::{CHUNK_SIZE, FileId, is_safe_relative_path};
 use anyhow::bail;
 use async_trait::async_trait;
@@ -100,53 +100,43 @@ pub struct JobInstruction {
     pub is_resumed: bool,
     pub state: State,
     pub remaining_bytes: u64,
-    pub full_path: PathBuf,
 }
 
 impl JobInstruction {
-    pub(crate) fn new(metadata: Metadata, target_path: &Path) -> anyhow::Result<Self> {
-        let total_chunks: usize =
-            ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
-        let mut is_resumed = false;
+    pub fn new(metadata: Metadata) -> Self {
+        let total_chunks =
+            ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size) as usize;
 
-        let full_path = metadata.resolve_path(target_path);
+        let state = State(bitvec![u8, Lsb0; 0; total_chunks]);
 
-        let state_file_path = full_path.with_added_extension("state");
-
-        if let Some(parent) = state_file_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let state = if state_file_path.exists() {
-            let state_bytes = fs::read(&state_file_path)?;
-
-            let mut bitvec: BitVec<u8, Lsb0> = BitVec::from_vec(state_bytes);
-            bitvec.truncate(total_chunks);
-
-            is_resumed = true;
-
-            State(bitvec)
-        } else {
-            let state = State(bitvec![u8, Lsb0; 0; total_chunks]);
-            fs::write(&state_file_path, state.0.as_raw_slice())?;
-            state
-        };
-
-        Ok(Self {
-            remaining_bytes: Self::get_remaining_size(&state, &metadata),
-            is_resumed,
+        Self {
+            remaining_bytes: metadata.size,
+            is_resumed: false,
             metadata,
             state,
-            full_path,
-        })
+        }
     }
 
-    fn get_remaining_size(state: &State, metadata: &Metadata) -> u64 {
+    pub fn load_state_from_disk(&mut self, state_file_path: &Path) -> anyhow::Result<()> {
+        if state_file_path.exists() {
+            let state_bytes = fs::read(&state_file_path)?;
+            let mut bitvec: BitVec<u8, Lsb0> = BitVec::from_vec(state_bytes);
+            bitvec.truncate(self.state.0.len());
+
+            self.is_resumed = true;
+            self.state = State(bitvec);
+            self.remaining_bytes = self.get_remaining_size();
+        }
+
+        Ok(())
+    }
+
+    fn get_remaining_size(&self) -> u64 {
         let mut total = 0;
-        for idx in 0..state.0.len() {
-            if let Some(val) = state.0.get(idx) {
+        for idx in 0..self.state.0.len() {
+            if let Some(val) = self.state.0.get(idx) {
                 if !*val {
-                    total += metadata.get_chunk_size(idx as u64);
+                    total += self.metadata.get_chunk_size(idx as u64);
                 }
             }
         }
@@ -157,7 +147,10 @@ impl JobInstruction {
 pub struct ManifestManager;
 
 impl ManifestManager {
-    pub fn parse(manifest: Manifest, target_path: &Path) -> anyhow::Result<Vec<JobInstruction>> {
+    pub fn parse(
+        manifest: Manifest,
+        staging: Arc<TransferStaging>,
+    ) -> anyhow::Result<Vec<JobInstruction>> {
         let mut instructions = Vec::new();
 
         for metadata in manifest.files.into_iter() {
@@ -165,13 +158,10 @@ impl ManifestManager {
                 bail!("Invalid path")
             }
 
-            let full_path = metadata.resolve_path(target_path);
+            let mut instruction = JobInstruction::new(metadata);
+            let state_path = &staging.state_path(&instruction.metadata.relative_path);
+            instruction.load_state_from_disk(&state_path)?;
 
-            if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            let instruction = JobInstruction::new(metadata, target_path)?;
             instructions.push(instruction);
         }
 

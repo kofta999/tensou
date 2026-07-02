@@ -3,13 +3,13 @@ use crate::protocol::{
     State, TransferObserver,
 };
 use std::{
-    fs::{self},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    task,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -69,9 +69,7 @@ impl SendSession {
 pub struct DiskWriter {
     metadata: Metadata,
     state: State,
-    state_file_path: PathBuf,
-    part_file_path: PathBuf,
-    full_path: PathBuf,
+    staging: Arc<TransferStaging>,
     is_resumed: bool,
     file: Option<File>,
     transfer_id: u32,
@@ -81,7 +79,6 @@ pub struct DiskWriter {
 }
 
 impl DiskWriter {
-    /// Creates sparse file, loads state if exists
     pub fn new(
         IgnitionPayload {
             rx,
@@ -89,18 +86,14 @@ impl DiskWriter {
             transfer_id,
             observer,
             cancel_token,
+            staging,
         }: IgnitionPayload,
     ) -> anyhow::Result<Self> {
-        let state_file_path = ins.full_path.with_added_extension("state");
-        let part_file_path = ins.full_path.with_added_extension("part");
-
         Ok(Self {
             state: ins.state,
-            state_file_path,
-            part_file_path,
             metadata: ins.metadata,
             is_resumed: ins.is_resumed,
-            full_path: ins.full_path,
+            staging,
             file: None,
             transfer_id,
             rx,
@@ -161,16 +154,26 @@ impl DiskWriter {
     }
 
     async fn save_state(&self) -> anyhow::Result<()> {
-        tokio::fs::write(&self.state_file_path, self.state.0.as_raw_slice()).await?;
+        tokio::fs::write(
+            &self.staging.state_path(&self.metadata.relative_path),
+            self.state.0.as_raw_slice(),
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
         if packet.header.hash == ChunkHeader::hash_chunk(&packet.bytes) {
             let offset = packet.header.index * self.metadata.chunk_size;
+            let part_path = self.staging.part_path(&self.metadata.relative_path);
+
+            if self.file.is_none() {
+                self.staging
+                    .create_file_staging_dir(&self.metadata.relative_path)?;
+            }
 
             if !self.is_resumed {
-                Self::allocate_sparse_file(&self.part_file_path, self.metadata.size).await?;
+                Self::allocate_sparse_file(&part_path, self.metadata.size).await?;
                 self.is_resumed = true;
             }
 
@@ -178,7 +181,7 @@ impl DiskWriter {
                 let file = tokio::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(&self.part_file_path)
+                    .open(&part_path)
                     .await?;
                 self.file = Some(file);
             }
@@ -204,9 +207,17 @@ impl DiskWriter {
         // Drop the open file handle so it is closed and we can rename/remove it
         self.file = None;
 
-        fs::remove_file(&self.state_file_path)?;
+        let state_path = self.staging.state_path(&self.metadata.relative_path);
+        if state_path.exists() {
+            std::fs::remove_file(state_path)?;
+        }
 
-        fs::rename(&self.part_file_path, &self.full_path)?;
+        self.staging
+            .create_file_destination_dir(&self.metadata.relative_path)?;
+
+        let part_path = self.staging.part_path(&self.metadata.relative_path);
+        let final_path = self.staging.final_path(&self.metadata.relative_path);
+        std::fs::rename(part_path, final_path)?;
 
         Ok(())
     }
@@ -217,12 +228,14 @@ pub struct IgnitionPayload {
     pub ins: JobInstruction,
     pub transfer_id: u32,
     pub observer: Arc<dyn TransferObserver>,
+    pub staging: Arc<TransferStaging>,
     pub cancel_token: CancellationToken,
 }
 
 pub struct ReceiveSession {
     tx: ChunkPacketSender,
     ignition: Mutex<Option<IgnitionPayload>>,
+    pub writer_handle: Mutex<Option<task::JoinHandle<anyhow::Result<()>>>>,
 }
 
 impl ReceiveSession {
@@ -230,21 +243,18 @@ impl ReceiveSession {
         Self {
             tx,
             ignition: Mutex::new(Some(ignition)),
+            writer_handle: Mutex::new(None),
         }
     }
 
     pub async fn write_chunk(&self, header: ChunkHeader, bytes: Vec<u8>) -> anyhow::Result<()> {
         if let Some(ign) = self.ignition.lock().unwrap().take() {
-            tokio::spawn(async move {
-                if let Err(e) = async {
-                    let mut writer = DiskWriter::new(ign)?;
-                    writer.run().await
-                }
-                .await
-                {
-                    eprintln!("Disk I/O Error: {:?}", e);
-                }
+            let handle = tokio::spawn(async move {
+                let mut writer = DiskWriter::new(ign)?;
+                writer.run().await
             });
+
+            *self.writer_handle.lock().unwrap() = Some(handle);
         }
 
         // We've resumes, so it's no problem if we couldn't send a packet once
@@ -256,12 +266,130 @@ impl ReceiveSession {
     }
 }
 
+pub struct TransferStaging {
+    /// Final user-visible destination directory (e.g. `Downloads/MyTransfer/`)
+    pub dest_dir: PathBuf,
+    /// Hidden staging directory on the same partition (e.g. `Downloads/MyTransfer/.tensou/`)
+    pub staging_dir: PathBuf,
+    /// Either directory name or file name if it's a single-file operation (e.g. `MyPhotos (1)`)
+    job_name: String,
+    is_single_file: bool,
+}
+
+impl TransferStaging {
+    pub fn new(
+        downloads_dir: PathBuf,
+        job_name: &str,
+        overwrite: bool,
+        is_single_file: bool,
+    ) -> Self {
+        let base_path = downloads_dir.join(&job_name);
+        let unique_path = if overwrite {
+            base_path
+        } else {
+            crate::protocol::find_unique_path(&base_path)
+        };
+
+        let resolved_job_name = unique_path
+            .file_name()
+            .map(|v| v.to_string_lossy().into_owned())
+            .unwrap_or_else(|| job_name.to_string());
+
+        let dest_dir = if is_single_file {
+            downloads_dir
+        } else {
+            unique_path
+        };
+
+        Self {
+            staging_dir: dest_dir.join(".tensou"),
+            dest_dir,
+            job_name: resolved_job_name,
+            is_single_file,
+        }
+    }
+
+    /// Resolve where a partial download should go (e.g. `.tensou/subfolder/file.part`)
+    pub fn part_path(&self, relative_path: &str) -> PathBuf {
+        let path_name = if self.is_single_file && relative_path.is_empty() {
+            &self.job_name
+        } else {
+            relative_path
+        };
+
+        self.staging_dir
+            .join(path_name)
+            .with_added_extension("part")
+    }
+
+    /// Resolve where a transfer state file should go (e.g. `.tensou/subfolder/file.state`)
+    pub fn state_path(&self, relative_path: &str) -> PathBuf {
+        let path_name = if self.is_single_file && relative_path.is_empty() {
+            &self.job_name
+        } else {
+            relative_path
+        };
+
+        self.staging_dir
+            .join(path_name)
+            .with_added_extension("state")
+    }
+
+    /// Resolve the final destination path (e.g. `MyTransfer/subfolder/file`)
+    pub fn final_path(&self, relative_path: &str) -> PathBuf {
+        let path_name = if self.is_single_file && relative_path.is_empty() {
+            &self.job_name
+        } else {
+            relative_path
+        };
+
+        self.dest_dir.join(path_name)
+    }
+
+    pub fn prepare(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.staging_dir)
+    }
+
+    /// Safely creates the parent directory hierarchy for a staging file
+    /// (e.g., creating `.tensou/nested_folder/` so we can write the .part file)
+    pub fn create_file_staging_dir(&self, relative_path: &str) -> std::io::Result<()> {
+        let part_path = self.part_path(relative_path);
+        if let Some(parent) = part_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    /// Safely creates the parent directory hierarchy in the final destination folder
+    /// (e.g., creating `MyPhotos/nested_folder/` right before renaming the file out of staging)
+    pub fn create_file_destination_dir(&self, relative_path: &str) -> std::io::Result<()> {
+        let final_path = self.final_path(relative_path);
+        if let Some(parent) = final_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    /// Clean up the staging directory recursively
+    pub fn cleanup(&self) -> std::io::Result<()> {
+        if self.staging_dir.exists() {
+            return std::fs::remove_dir_all(&self.staging_dir);
+        }
+        Ok(())
+    }
+
+    /// Accessor for the active job name (e.g. for notifications or UI tracking)
+    pub fn job_name(&self) -> &str {
+        &self.job_name
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{CHUNK_SIZE, protocol::JobInstruction};
     use rand::Rng;
-    use std::time::Duration;
+    use std::{fs, time::Duration};
     use tempfile::tempdir;
     use tokio::sync::mpsc;
 
@@ -288,7 +416,15 @@ mod tests {
         let send_session = SendSession::new(metadata, &source_path)?;
 
         let (tx, rx) = mpsc::channel::<ChunkPacket>(10);
-        let instruction = JobInstruction::new(send_session.get_metadata(), &received_dir)?;
+        let instruction = JobInstruction::new(send_session.get_metadata());
+
+        let staging = Arc::new(TransferStaging::new(
+            received_dir.to_path_buf(),
+            "source.bin",
+            true,
+            true,
+        ));
+        staging.prepare()?;
 
         let ignition = IgnitionPayload {
             ins: instruction,
@@ -296,6 +432,7 @@ mod tests {
             transfer_id: 0,
             observer: Arc::new(TestObserver {}),
             cancel_token: CancellationToken::new(),
+            staging,
         };
         let receive_session = ReceiveSession::new(tx, ignition);
 
