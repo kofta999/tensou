@@ -36,29 +36,53 @@ impl Metadata {
     }
 }
 
-pub fn find_unique_path(path: &Path) -> PathBuf {
-    let mut p = path.to_path_buf();
-    if !p.exists() {
-        return p;
-    }
-    let base_name = path.file_stem().and_then(|s| s.to_str());
-    let extension = path.extension().and_then(|s| s.to_str());
+fn find_extension_start(file_name: &str) -> usize {
+    let last_dot = match file_name.rfind('.') {
+        Some(idx) if idx > 0 => idx,
+        _ => return file_name.len(),
+    };
 
-    if let Some(base_name) = base_name {
-        let mut counter = 1;
-        loop {
-            let candidate = match extension {
-                Some(e) => format!("{base_name} ({counter}).{e}"),
-                None => format!("{base_name} ({counter})"),
-            };
-            p.set_file_name(candidate);
-            if !p.exists() {
-                return p;
-            }
-            counter += 1;
+    let penultimate_dot = match file_name[..last_dot].rfind('.') {
+        Some(idx) => idx,
+        None => return last_dot,
+    };
+
+    let common_suffixes = ["bz", "bz2", "gz", "lz", "lzma", "lzo", "xz", "z", "zst"];
+    let final_ext = &file_name[last_dot + 1..].to_ascii_lowercase();
+
+    if common_suffixes.contains(&final_ext.as_str()) {
+        let middle_segment_len = last_dot - penultimate_dot;
+        if middle_segment_len <= 5 && middle_segment_len > 1 {
+            return penultimate_dot;
         }
     }
-    p
+
+    last_dot
+}
+
+pub fn find_unique_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+
+    let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+    let ext_start = find_extension_start(&file_name);
+
+    let stem = &file_name[..ext_start];
+    let ext = &file_name[ext_start..]; // includes the leading dot (e.g. ".tar.gz")
+
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let mut counter = 1;
+
+    loop {
+        let new_file_name = format!("{} ({}){}", stem, counter, ext);
+        let new_path = parent.join(new_file_name);
+
+        if !new_path.exists() {
+            return new_path;
+        }
+        counter += 1;
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,4 +244,228 @@ pub trait TransferObserver: Send + Sync {
 #[async_trait]
 pub trait TransferConsentHandler: Send + Sync {
     async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Verifies that find_unique_path returns the original path unchanged if the file does not exist.
+    #[test]
+    fn unique_path_nonexistent_returns_as_is() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("ghost.bin");
+        assert_eq!(find_unique_path(&target), target);
+    }
+
+    /// Verifies that find_unique_path appends a counter suffix (e.g. `(1)`) if a file already exists.
+    #[test]
+    fn unique_path_existing_file_increments() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("file.txt");
+        std::fs::write(&target, b"x").unwrap();
+
+        let unique = find_unique_path(&target);
+        assert_eq!(unique, dir.path().join("file (1).txt"));
+    }
+
+    /// Verifies that find_unique_path increments the counter progressively if multiple naming collisions exist.
+    #[test]
+    fn unique_path_multiple_collisions() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("archive.tar.gz");
+        std::fs::write(&target, b"x").unwrap();
+        std::fs::write(dir.path().join("archive (1).tar.gz"), b"x").unwrap();
+        std::fs::write(dir.path().join("archive (2).tar.gz"), b"x").unwrap();
+
+        let unique = find_unique_path(&target);
+        assert_eq!(unique, dir.path().join("archive (3).tar.gz"));
+    }
+
+    /// Verifies that find_unique_path appends the suffix correctly for files without extensions (e.g., `Makefile`).
+    #[test]
+    fn unique_path_no_extension() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("Makefile");
+        std::fs::write(&target, b"x").unwrap();
+
+        let unique = find_unique_path(&target);
+        assert_eq!(unique, dir.path().join("Makefile (1)"));
+    }
+
+    /// Verifies that find_unique_path handles dotfiles (e.g. `.bashrc`) correctly.
+    #[test]
+    fn unique_path_dotfile() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(".bashrc");
+        std::fs::write(&target, b"x").unwrap();
+
+        let unique = find_unique_path(&target);
+        assert_eq!(unique, dir.path().join(".bashrc (1)"));
+    }
+
+    /// Verifies that Metadata::get_chunk_size returns the standard chunk size for intermediate chunks.
+    #[test]
+    fn chunk_size_full_chunks() {
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "".into(),
+            size: 12,
+            chunk_size: 4,
+        };
+        assert_eq!(m.get_chunk_size(0), 4);
+        assert_eq!(m.get_chunk_size(1), 4);
+        assert_eq!(m.get_chunk_size(2), 4);
+    }
+
+    /// Verifies that Metadata::get_chunk_size returns the correct remaining bytes for the final partial chunk.
+    #[test]
+    fn chunk_size_last_partial_chunk() {
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "".into(),
+            size: 10,
+            chunk_size: 4,
+        };
+        assert_eq!(m.get_chunk_size(0), 4);
+        assert_eq!(m.get_chunk_size(1), 4);
+        assert_eq!(m.get_chunk_size(2), 2);
+    }
+
+    /// Verifies that Metadata::get_chunk_size returns the entire file size if it is smaller than the chunk size limit.
+    #[test]
+    fn chunk_size_single_chunk_smaller_than_max() {
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "".into(),
+            size: 100,
+            chunk_size: 4 * 1024 * 1024,
+        };
+        assert_eq!(m.get_chunk_size(0), 100);
+    }
+
+    /// Verifies that constructing a JobInstruction is a pure in-memory operation without disk side-effects.
+    #[test]
+    fn job_instruction_new_is_memory_only() {
+        let dir = tempdir().unwrap();
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "sub/file.txt".into(),
+            size: 8,
+            chunk_size: 4,
+        };
+        let ins = JobInstruction::new(m);
+
+        assert!(!dir.path().join("sub").exists());
+        assert!(!ins.is_resumed);
+        assert_eq!(ins.remaining_bytes, 8);
+        assert!(ins.state.0.not_any());
+    }
+
+    /// Verifies that load_state_from_disk restores bitvec states and sizes for resuming.
+    #[test]
+    fn job_instruction_load_state_resumes_correctly() {
+        let dir = tempdir().unwrap();
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "".into(),
+            size: 8,
+            chunk_size: 4,
+        };
+        let mut ins = JobInstruction::new(m);
+
+        let mut bv = bitvec![u8, Lsb0; 0; 2];
+        bv.set(0, true);
+        let state_file = dir.path().join("resume.state");
+        std::fs::write(&state_file, bv.as_raw_slice()).unwrap();
+
+        ins.load_state_from_disk(&state_file).unwrap();
+
+        assert!(ins.is_resumed);
+        assert!(ins.state.0[0]);
+        assert!(!ins.state.0[1]);
+        assert_eq!(ins.remaining_bytes, 4);
+    }
+
+    /// Verifies that load_state_from_disk behaves as a no-op if the state file does not exist.
+    #[test]
+    fn job_instruction_load_state_nonexistent_is_noop() {
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "".into(),
+            size: 8,
+            chunk_size: 4,
+        };
+        let mut ins = JobInstruction::new(m);
+        ins.load_state_from_disk(std::path::Path::new("/tmp/does_not_exist_xyz.state"))
+            .unwrap();
+
+        assert!(!ins.is_resumed);
+        assert_eq!(ins.remaining_bytes, 8);
+    }
+
+    /// Verifies that ManifestManager::build correctly constructs a manifest for a single file.
+    #[test]
+    fn manifest_build_single_file() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("hello.txt");
+        std::fs::write(&file, b"hello world").unwrap();
+
+        let (manifest, sessions) = ManifestManager::build(&file).unwrap();
+
+        assert_eq!(manifest.job_name, "hello.txt");
+        assert_eq!(manifest.files.len(), 1);
+        assert_eq!(manifest.files[0].relative_path, "");
+        assert_eq!(manifest.files[0].size, 11);
+        assert_eq!(sessions.len(), 1);
+    }
+
+    /// Verifies that ManifestManager::build preserves relative directory layouts for folder transfers.
+    #[test]
+    fn manifest_build_nested_directory() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"aaa").unwrap();
+        std::fs::write(dir.path().join("sub/b.txt"), b"bbbbb").unwrap();
+
+        let (manifest, sessions) = ManifestManager::build(dir.path()).unwrap();
+
+        assert_eq!(manifest.files.len(), 2);
+        assert_eq!(sessions.len(), 2);
+
+        let paths: Vec<&str> = manifest
+            .files
+            .iter()
+            .map(|m| m.relative_path.as_str())
+            .collect();
+        assert!(paths.contains(&"a.txt"));
+        assert!(paths.contains(&"sub/b.txt"));
+    }
+
+    /// Verifies that paths containing traversal components like `..` are explicitly rejected.
+    #[test]
+    fn manifest_build_path_traversal_is_rejected() {
+        let staging_dir = tempdir().unwrap();
+        let staging = std::sync::Arc::new(crate::disk::TransferStaging::new(
+            staging_dir.path().to_path_buf(),
+            "job",
+            true,
+            false,
+        ));
+        staging.prepare().unwrap();
+
+        let manifest = Manifest {
+            job_name: "job".into(),
+            files: vec![Metadata {
+                file_id: 0,
+                relative_path: "../escape.txt".into(),
+                size: 4,
+                chunk_size: 4,
+            }],
+        };
+
+        let result = ManifestManager::parse(manifest, staging);
+        assert!(result.is_err(), "Path traversal should be rejected");
+    }
 }

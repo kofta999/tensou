@@ -13,6 +13,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug)]
 pub struct SendSession {
     metadata: Metadata,
     total_chunks: usize,
@@ -396,18 +397,132 @@ mod tests {
     struct TestObserver;
     impl TransferObserver for TestObserver {}
 
+    fn make_staging(dir: &std::path::Path, job: &str, single: bool) -> Arc<TransferStaging> {
+        let s = Arc::new(TransferStaging::new(dir.to_path_buf(), job, true, single));
+        s.prepare().unwrap();
+        s
+    }
+
+    /// Verifies staging paths calculation for a folder-based transfer.
+    #[test]
+    fn staging_folder_transfer_paths() {
+        let dir = tempdir().unwrap();
+        let staging = make_staging(dir.path(), "MyPhotos", false);
+
+        assert_eq!(
+            staging.staging_dir,
+            dir.path().join("MyPhotos").join(".tensou")
+        );
+        assert_eq!(
+            staging.part_path("nested/img.jpg"),
+            dir.path()
+                .join("MyPhotos")
+                .join(".tensou")
+                .join("nested/img.jpg.part")
+        );
+        assert_eq!(
+            staging.state_path("nested/img.jpg"),
+            dir.path()
+                .join("MyPhotos")
+                .join(".tensou")
+                .join("nested/img.jpg.state")
+        );
+        assert_eq!(
+            staging.final_path("nested/img.jpg"),
+            dir.path().join("MyPhotos").join("nested/img.jpg")
+        );
+    }
+
+    /// Verifies staging paths calculation for a single-file transfer.
+    #[test]
+    fn staging_single_file_transfer_paths() {
+        let dir = tempdir().unwrap();
+        let staging = make_staging(dir.path(), "photo.jpg", true);
+
+        assert_eq!(staging.staging_dir, dir.path().join(".tensou"));
+        assert_eq!(
+            staging.part_path(""),
+            dir.path().join(".tensou").join("photo.jpg.part")
+        );
+        assert_eq!(
+            staging.state_path(""),
+            dir.path().join(".tensou").join("photo.jpg.state")
+        );
+        assert_eq!(staging.final_path(""), dir.path().join("photo.jpg"));
+    }
+
+    /// Verifies that job name is deduplicated by finding a unique path if overwrite is disabled.
+    #[test]
+    fn staging_overwrite_false_deduplicates_job_name() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("MyPhotos")).unwrap();
+
+        let staging = Arc::new(TransferStaging::new(
+            dir.path().to_path_buf(),
+            "MyPhotos",
+            false,
+            false,
+        ));
+
+        assert_eq!(staging.job_name(), "MyPhotos (1)");
+        assert_eq!(staging.dest_dir, dir.path().join("MyPhotos (1)"));
+    }
+
+    /// Verifies that prepare() correctly creates the hidden staging directory on disk.
+    #[test]
+    fn staging_prepare_creates_staging_dir() {
+        let dir = tempdir().unwrap();
+        let staging = Arc::new(TransferStaging::new(
+            dir.path().to_path_buf(),
+            "job",
+            true,
+            false,
+        ));
+        assert!(!staging.staging_dir.exists());
+        staging.prepare().unwrap();
+        assert!(staging.staging_dir.exists());
+    }
+
+    /// Verifies that staging cleanup removes the hidden staging directory completely.
+    #[test]
+    fn staging_cleanup_removes_dir() {
+        let dir = tempdir().unwrap();
+        let staging = make_staging(dir.path(), "job", false);
+        assert!(staging.staging_dir.exists());
+        staging.cleanup().unwrap();
+        assert!(!staging.staging_dir.exists());
+    }
+
+    /// Verifies that create_file_staging_dir creates nested folder structures inside the staging folder.
+    #[test]
+    fn staging_create_file_staging_dir_nested() {
+        let dir = tempdir().unwrap();
+        let staging = make_staging(dir.path(), "job", false);
+        staging.create_file_staging_dir("a/b/c.txt").unwrap();
+        assert!(staging.staging_dir.join("a/b").is_dir());
+    }
+
+    /// Verifies that create_file_destination_dir creates nested destination directory hierarchies.
+    #[test]
+    fn staging_create_file_destination_dir_nested() {
+        let dir = tempdir().unwrap();
+        let staging = make_staging(dir.path(), "job", false);
+        staging.create_file_destination_dir("a/b/c.txt").unwrap();
+        assert!(staging.dest_dir.join("a/b").is_dir());
+    }
+
+    /// Verifies a complete and byte-perfect local transfer of a single file.
     #[tokio::test]
     async fn test_full_local_transfer() -> anyhow::Result<()> {
         let source_dir = tempdir()?;
         let dest_dir = tempdir()?;
         let source_path = source_dir.path().join("source.bin");
-        let received_dir = dest_dir.path();
 
         let mut buffer = vec![0u8; 10 * 1024 * 1024];
         rand::rng().fill_bytes(&mut buffer);
         fs::write(&source_path, &buffer)?;
 
-        let metadata = Metadata {
+        let metadata = crate::protocol::Metadata {
             file_id: 0,
             relative_path: "source.bin".to_string(),
             size: 10 * 1024 * 1024,
@@ -415,16 +530,10 @@ mod tests {
         };
         let send_session = SendSession::new(metadata, &source_path)?;
 
-        let (tx, rx) = mpsc::channel::<ChunkPacket>(10);
+        let (tx, rx) = mpsc::channel::<ChunkPacket>(16);
         let instruction = JobInstruction::new(send_session.get_metadata());
 
-        let staging = Arc::new(TransferStaging::new(
-            received_dir.to_path_buf(),
-            "source.bin",
-            true,
-            true,
-        ));
-        staging.prepare()?;
+        let staging = make_staging(dest_dir.path(), "source.bin", true);
 
         let ignition = IgnitionPayload {
             ins: instruction,
@@ -442,15 +551,86 @@ mod tests {
         }
 
         let handle = receive_session.writer_handle.lock().unwrap().take();
-        drop(receive_session); // close the tx
+        drop(receive_session);
         if let Some(h) = handle {
             h.await??;
         }
 
         assert!(file_diff::diff(
             source_path.to_str().unwrap(),
-            received_dir.join("source.bin").to_str().unwrap()
+            dest_dir.path().join("source.bin").to_str().unwrap()
         ));
+
+        Ok(())
+    }
+
+    struct ChunkSignalObserver {
+        tx: mpsc::Sender<()>,
+    }
+    impl crate::protocol::TransferObserver for ChunkSignalObserver {
+        fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(()).await;
+            });
+        }
+    }
+
+    /// Verifies that cancellation mid-transfer leaves the partial .part file intact.
+    #[tokio::test]
+    async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
+        let source_dir = tempdir()?;
+        let dest_dir = tempdir()?;
+        let source_path = source_dir.path().join("big.bin");
+
+        let file_size = 3 * CHUNK_SIZE as u64;
+        fs::write(&source_path, vec![0xABu8; file_size as usize])?;
+
+        let metadata = crate::protocol::Metadata {
+            file_id: 0,
+            relative_path: "big.bin".to_string(),
+            size: file_size,
+            chunk_size: CHUNK_SIZE as u64,
+        };
+        let send_session = SendSession::new(metadata, &source_path)?;
+
+        let (tx, rx) = mpsc::channel::<ChunkPacket>(16);
+        let instruction = JobInstruction::new(send_session.get_metadata());
+        let cancel_token = CancellationToken::new();
+
+        let staging = make_staging(dest_dir.path(), "big.bin", true);
+        let part_path = staging.part_path("");
+
+        let (obs_tx, mut obs_rx) = mpsc::channel(1);
+        let observer = Arc::new(ChunkSignalObserver { tx: obs_tx });
+
+        let ignition = IgnitionPayload {
+            ins: instruction,
+            rx,
+            transfer_id: 0,
+            observer,
+            cancel_token: cancel_token.clone(),
+            staging,
+        };
+        let receive_session = ReceiveSession::new(tx, ignition);
+
+        let (header, bytes) = send_session.get_chunk(0).await?;
+        receive_session.write_chunk(header, bytes).await?;
+
+        let _ = obs_rx.recv().await;
+
+        cancel_token.cancel();
+
+        let handle = receive_session.writer_handle.lock().unwrap().take();
+        drop(receive_session);
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+
+        assert!(
+            part_path.exists(),
+            ".part file should be kept after cancellation"
+        );
 
         Ok(())
     }

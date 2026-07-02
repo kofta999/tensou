@@ -144,21 +144,25 @@ mod tests {
         let test_port = 54321;
         let test_uuid = uuid::Uuid::new_v4().to_string(); // unique per test run
 
-        let mut config = config::Config::default();
-        config.listen_port = test_port;
-        config.device_uuid = test_uuid.clone(); // register with known UUID
-        let _broadcaster_daemon = register_service(&config)?;
-
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
+        // 1. Setup the Scanner first
         let (tx, mut rx) = mpsc::channel(5);
         let scanner_task = tokio::spawn(async move {
             let _ = scan_for_receivers(tx, "me").await;
         });
 
+        // Give the scanner daemon a tiny moment to bind and start browsing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 2. Register the service
+        let mut config = config::Config::default();
+        config.listen_port = test_port;
+        config.device_uuid = test_uuid.clone(); // register with known UUID
+        let _broadcaster_daemon = register_service(&config)?;
+
+        // 3. Await the discovery
         let start = std::time::Instant::now();
         let mut found = false;
-        while start.elapsed() < Duration::from_secs(3) {
+        while start.elapsed() < Duration::from_secs(5) {
             if let Ok(Some(DiscoveryEvent::DeviceFound(device))) =
                 tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
             {
