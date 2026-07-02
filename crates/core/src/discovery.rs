@@ -146,7 +146,9 @@ mod tests {
         let test_port = 54321;
 
         // 1. Start the Broadcaster
-        let _broadcaster_daemon = register_service(&config::Config::default())?;
+        let mut config = config::Config::default();
+        config.listen_port = test_port;
+        let _broadcaster_daemon = register_service(&config)?;
 
         // Give the OS a tiny moment to register the UDP socket and fire the packet
         tokio::time::sleep(Duration::from_millis(200)).await;
