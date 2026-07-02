@@ -27,9 +27,9 @@ impl From<usize> for GuiScreen {
     }
 }
 
-impl Into<usize> for GuiScreen {
-    fn into(self) -> usize {
-        self as usize
+impl From<GuiScreen> for usize {
+    fn from(val: GuiScreen) -> Self {
+        val as usize
     }
 }
 
@@ -189,6 +189,12 @@ impl ConsentRegistry {
         if let Some(tx) = pending.remove(&transfer_id) {
             let _ = tx.send(false);
         }
+    }
+}
+
+impl Default for ConsentRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

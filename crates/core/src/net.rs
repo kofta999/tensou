@@ -41,10 +41,11 @@ mod tests {
     impl TransferObserver for TestObserver {}
 
     fn make_config(dest: &std::path::Path, overwrite: bool) -> Config {
-        let mut config = Config::default();
-        config.target_dir = dest.to_path_buf();
-        config.overwrite_dest = overwrite;
-        config
+        Config {
+            target_dir: dest.to_path_buf(),
+            overwrite_dest: overwrite,
+            ..Default::default()
+        }
     }
 
     async fn spawn_daemon(
@@ -107,11 +108,11 @@ mod tests {
         let source_path_1 = source_dir.path().join("source.bin");
         let source_path_2 = source_dir.path().join("source_different.bin");
 
-        let mut buffer_1 = vec![0u8; 1 * 1024 * 1024];
+        let mut buffer_1 = vec![0u8; 1024 * 1024];
         rand::rng().fill_bytes(&mut buffer_1);
         std::fs::write(&source_path_1, &buffer_1)?;
 
-        let mut buffer_2 = vec![0u8; 1 * 1024 * 1024];
+        let mut buffer_2 = vec![0u8; 1024 * 1024];
         rand::rng().fill_bytes(&mut buffer_2);
         std::fs::write(&source_path_2, &buffer_2)?;
 

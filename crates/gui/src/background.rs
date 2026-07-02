@@ -53,7 +53,7 @@ pub fn spawn_discovery(
 
             let _ = main_window_weak_devices.upgrade_in_event_loop(move |ui| {
                 let model = rc_model_from_vec(slint_devices);
-                ui.global::<AppData>().set_devices(model.into());
+                ui.global::<AppData>().set_devices(model);
             });
         }
     });

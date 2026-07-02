@@ -121,8 +121,7 @@ pub struct JobInstruction {
 
 impl JobInstruction {
     pub fn new(metadata: Metadata) -> Self {
-        let total_chunks =
-            ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size) as usize;
+        let total_chunks = metadata.size.div_ceil(metadata.chunk_size) as usize;
 
         let state = State(bitvec![u8, Lsb0; 0; total_chunks]);
 
@@ -136,7 +135,7 @@ impl JobInstruction {
 
     pub fn load_state_from_disk(&mut self, state_file_path: &Path) -> anyhow::Result<()> {
         if state_file_path.exists() {
-            let state_bytes = fs::read(&state_file_path)?;
+            let state_bytes = fs::read(state_file_path)?;
             let mut bitvec: BitVec<u8, Lsb0> = BitVec::from_vec(state_bytes);
             bitvec.truncate(self.state.0.len());
 
@@ -151,10 +150,10 @@ impl JobInstruction {
     fn get_remaining_size(&self) -> u64 {
         let mut total = 0;
         for idx in 0..self.state.0.len() {
-            if let Some(val) = self.state.0.get(idx) {
-                if !*val {
-                    total += self.metadata.get_chunk_size(idx as u64);
-                }
+            if let Some(val) = self.state.0.get(idx)
+                && !*val
+            {
+                total += self.metadata.get_chunk_size(idx as u64);
             }
         }
         total
@@ -177,7 +176,7 @@ impl ManifestManager {
 
             let mut instruction = JobInstruction::new(metadata);
             let state_path = &staging.state_path(&instruction.metadata.relative_path);
-            instruction.load_state_from_disk(&state_path)?;
+            instruction.load_state_from_disk(state_path)?;
 
             instructions.push(instruction);
         }

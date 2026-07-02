@@ -126,7 +126,7 @@ impl Sender {
 
                         observer_clone.on_chunk_transferred(None, buf_len);
 
-                        return anyhow::Ok(())
+                        anyhow::Ok(())
                     } => {
                         stream_result?
                     }

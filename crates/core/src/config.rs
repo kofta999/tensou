@@ -59,14 +59,13 @@ impl Config {
 
     /// Load config from disk, or create and save defaults if it doesn't exist
     pub fn load_or_create() -> Self {
-        if let Some(path) = Self::config_path() {
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    match toml::from_str::<Config>(&content) {
-                        Ok(config) => return config,
-                        Err(e) => eprintln!("Config parsing error: {e}"),
-                    }
-                }
+        if let Some(path) = Self::config_path()
+            && path.exists()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            match toml::from_str::<Config>(&content) {
+                Ok(config) => return config,
+                Err(e) => eprintln!("Config parsing error: {e}"),
             }
         }
 
@@ -82,8 +81,7 @@ impl Config {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let toml_str = toml::to_string_pretty(self)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let toml_str = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
             std::fs::write(path, toml_str)?;
         }
         Ok(())

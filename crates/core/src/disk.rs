@@ -22,8 +22,7 @@ pub struct SendSession {
 
 impl SendSession {
     pub fn new(metadata: Metadata, full_path: &Path) -> anyhow::Result<Self> {
-        let total_chunks: usize =
-            ((metadata.size + metadata.chunk_size - 1) / metadata.chunk_size).try_into()?;
+        let total_chunks: usize = metadata.size.div_ceil(metadata.chunk_size).try_into()?;
 
         Ok(Self {
             metadata,
@@ -284,7 +283,7 @@ impl TransferStaging {
         overwrite: bool,
         is_single_file: bool,
     ) -> Self {
-        let base_path = downloads_dir.join(&job_name);
+        let base_path = downloads_dir.join(job_name);
         let unique_path = if overwrite {
             base_path
         } else {

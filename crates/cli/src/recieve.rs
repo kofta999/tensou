@@ -31,7 +31,7 @@ impl TransferObserver for CliReceiveTransfer {
     ) {
         let pb = self
             .multi_progress
-            .add(create_transfer_pb(total_bytes, &job_name, false));
+            .add(create_transfer_pb(total_bytes, job_name, false));
         self.active.lock().unwrap().insert(transfer_id, pb);
     }
 

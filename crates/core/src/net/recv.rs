@@ -161,7 +161,7 @@ impl ReceiverDaemon {
         }
 
         println!("Waiting for active transfers to safely flush to disk...");
-        while let Some(_) = active_transfers.join_next().await {}
+        while active_transfers.join_next().await.is_some() {}
     }
 
     fn configure_server() -> anyhow::Result<ServerConfig> {

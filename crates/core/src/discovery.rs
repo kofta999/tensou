@@ -116,10 +116,8 @@ pub async fn scan_for_receivers(
                     }
 
                     ServiceEvent::ServiceRemoved(_, fullname) => {
-                        if discovered_devices.remove(&fullname).is_some() {
-                            if tx.send(DiscoveryEvent::DeviceLost(fullname)).await.is_err() {
-                                break;
-                            }
+                        if discovered_devices.remove(&fullname).is_some() && tx.send(DiscoveryEvent::DeviceLost(fullname)).await.is_err() {
+                            break;
                         }
                     }
                     _ => (),
@@ -154,9 +152,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // 2. Register the service
-        let mut config = config::Config::default();
-        config.listen_port = test_port;
-        config.device_uuid = test_uuid.clone(); // register with known UUID
+        let config = config::Config {
+            listen_port: test_port,
+            device_uuid: test_uuid.clone(),
+            ..Default::default()
+        };
         let _broadcaster_daemon = register_service(&config)?;
 
         // 3. Await the discovery
