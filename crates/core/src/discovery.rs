@@ -76,9 +76,9 @@ pub async fn scan_for_receivers(
                             let socket_addr = SocketAddr::new(IpAddr::V4(*addr.addr()), info.port);
                             let fullname = info.get_fullname().to_string();
 
-                            let device_uuid = info.get_properties().get_property_val_str("device_uuid").unwrap().to_string();
-                            let display_name = info.get_properties().get_property_val_str("display_name").unwrap().to_string();
-                            let os_type = info.get_properties().get_property_val_str("os_type").unwrap().to_string();
+                            let device_uuid = info.get_properties().get_property_val_str("device_uuid").unwrap_or_default().to_string();
+                            let display_name = info.get_properties().get_property_val_str("display_name").unwrap_or_default().to_string();
+                            let os_type = info.get_properties().get_property_val_str("os_type").unwrap_or_default().to_string();
 
                             let is_new_or_changed = match discovered_devices.get(&fullname) {
                                 Some(&existing_addr) => existing_addr != socket_addr,
@@ -141,50 +141,44 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_mdns_discovery_loopback() -> anyhow::Result<()> {
-        // We use a highly specific random port to ensure we don't accidentally
-        // test against a real running instance of your app!
         let test_port = 54321;
+        let test_uuid = uuid::Uuid::new_v4().to_string(); // unique per test run
 
-        // 1. Start the Broadcaster
-        let _broadcaster_daemon = register_service(&config::Config::default())?;
-
-        // Give the OS a tiny moment to register the UDP socket and fire the packet
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // 2. Setup the Scanner channel
+        // 1. Setup the Scanner first
         let (tx, mut rx) = mpsc::channel(5);
-
-        // 3. Spawn the Scanner in a background task
         let scanner_task = tokio::spawn(async move {
             let _ = scan_for_receivers(tx, "me").await;
         });
 
-        // 4. Await the discovery with a strict timeout so a failing test doesn't hang forever
+        // Give the scanner daemon a tiny moment to bind and start browsing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 2. Register the service
+        let mut config = config::Config::default();
+        config.listen_port = test_port;
+        config.device_uuid = test_uuid.clone(); // register with known UUID
+        let _broadcaster_daemon = register_service(&config)?;
+
+        // 3. Await the discovery
         let start = std::time::Instant::now();
         let mut found = false;
-        while start.elapsed() < Duration::from_secs(3) {
+        while start.elapsed() < Duration::from_secs(5) {
             if let Ok(Some(DiscoveryEvent::DeviceFound(device))) =
                 tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
             {
-                println!("Found device: {} at {}", device.display_name, device.addr);
-                if device.addr.port() == test_port {
+                // Filter by UUID, not just port — immune to real running instances
+                if device.device_uuid == test_uuid {
                     found = true;
                     break;
                 }
-            } else if rx.is_empty() {
-                tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
 
-        // 5. Verification
-        if !found {
-            anyhow::bail!("Did not discover the test device on port {}", test_port);
-        }
-
-        // 6. Cleanup
-        // Abort the scanner task, which drops the channel and shuts down the mdns daemon
         scanner_task.abort();
 
+        if !found {
+            anyhow::bail!("Did not discover the test device");
+        }
         Ok(())
     }
 }

@@ -1,13 +1,13 @@
-use crate::{
-    discovery::DiscoveryEvent,
-    gui::{
-        GuiDevice, GuiTransfer,
-        state::GuiEvent,
-        views::{AppData, Device, MainWindow, Transfer},
-    },
-};
+use crate::GuiDevice;
+use crate::GuiTransfer;
+use crate::state::GuiEvent;
+use crate::views::AppData;
+use crate::views::Device;
+use crate::views::MainWindow;
+use crate::views::Transfer;
 use slint::{ComponentHandle, Model, Weak};
 use std::sync::{Arc, Mutex};
+use tensou_core::discovery::DiscoveryEvent;
 use tokio::sync::mpsc;
 
 /// Background task to process mDNS discovery
@@ -22,7 +22,12 @@ pub fn spawn_discovery(
             let mut devices = local_devices.lock().unwrap();
             match event {
                 DiscoveryEvent::DeviceFound(discovered_device) => {
-                    println!("Discovered device: name={}, uuid={}, os={}", discovered_device.display_name, discovered_device.device_uuid, discovered_device.os_type);
+                    println!(
+                        "Discovered device: name={}, uuid={}, os={}",
+                        discovered_device.display_name,
+                        discovered_device.device_uuid,
+                        discovered_device.os_type
+                    );
                     // Check if we already have this device to prevent duplicate entries
                     devices.retain(|v| v.device_uuid != discovered_device.device_uuid);
                     devices.push(discovered_device.into());

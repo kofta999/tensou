@@ -1,16 +1,16 @@
-use crate::config::Config;
-use crate::gui::GuiTransfer;
-use crate::gui::state::ConsentRegistry;
-use crate::gui::state::GuiEvent;
-use crate::gui::views::AppData;
-use crate::gui::views::Logic;
-use crate::gui::views::MainWindow;
-use crate::net;
+use crate::GuiTransfer;
+use crate::state::ConsentRegistry;
+use crate::state::GuiEvent;
+use crate::views::AppData;
+use crate::views::Logic;
+use crate::views::MainWindow;
 use slint::ComponentHandle;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tensou_core::config::Config;
+use tensou_core::net;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -186,7 +186,7 @@ fn send_file_background(
                     cancel_token: client.cancel_token.clone(),
                 });
 
-                let observer = std::sync::Arc::new(crate::gui::state::GuiTransferObserver {
+                let observer = std::sync::Arc::new(crate::state::GuiTransferObserver {
                     transfer_id,
                     tx: tx_clone.clone(),
                     is_sender: true,

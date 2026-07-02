@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::SERVER_PORT;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Unique identifier for this device (generated on first run).
@@ -44,7 +46,7 @@ impl Default for Config {
             os_type,
             target_dir,
             overwrite_dest: false,
-            listen_port: 6967,
+            listen_port: SERVER_PORT,
         }
     }
 }
@@ -60,8 +62,9 @@ impl Config {
         if let Some(path) = Self::config_path() {
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(config) = toml::from_str::<Config>(&content) {
-                        return config;
+                    match toml::from_str::<Config>(&content) {
+                        Ok(config) => return config,
+                        Err(e) => eprintln!("Config parsing error: {e}"),
                     }
                 }
             }

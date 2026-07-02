@@ -19,14 +19,12 @@ pub type FileId = usize;
 pub type TransferId = u32;
 pub type ChunkIndex = u64;
 
-pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod discovery;
 pub mod disk;
-pub mod gui;
 pub mod net;
-mod protocol;
+pub mod protocol;
 
 pub fn is_safe_relative_path(path: &Path) -> bool {
     path.components().all(|c| matches!(c, Component::Normal(_)))

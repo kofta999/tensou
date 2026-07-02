@@ -3,10 +3,10 @@ use crate::{
     QUIC_STREAM_RECEIVE_WINDOW,
     config::Config,
     discovery,
-    disk::{IgnitionPayload, ReceiveSession},
+    disk::{IgnitionPayload, ReceiveSession, TransferStaging},
     protocol::{
         ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferConsentHandler,
-        TransferObserver, find_unique_path,
+        TransferObserver,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -40,7 +40,6 @@ impl ReceiverDaemon {
         Ok(self.endpoint.local_addr()?)
     }
 
-    // TODO: target_dir will be replaced by a Config struct later
     pub async fn run(
         &self,
         consent: Arc<dyn TransferConsentHandler>,
@@ -213,19 +212,23 @@ impl PendingTransfer {
     ) -> anyhow::Result<Receiver> {
         self.send_stream.write_u8(1).await?;
 
-        let mut target_path = target_dir.join(&self.manifest.job_name);
-        if !overwrite {
-            target_path = find_unique_path(&target_path);
-        }
-        let job_name = target_path
-            .file_name()
-            .map(|v| v.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.manifest.job_name.clone());
+        let is_single_file =
+            self.manifest.files.len() == 1 && self.manifest.files[0].relative_path.is_empty();
 
-        let target_path_clone = target_path.clone();
+        let staging = Arc::new(TransferStaging::new(
+            target_dir.to_path_buf(),
+            &self.manifest.job_name,
+            overwrite,
+            is_single_file,
+        ));
+        let job_name = staging.job_name().to_string();
 
+        let staging_clone = staging.clone();
+        tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
+
+        let staging_clone = staging.clone();
         let instructions = tokio::task::spawn_blocking(move || {
-            ManifestManager::parse(self.manifest, &target_path_clone)
+            ManifestManager::parse(self.manifest, staging_clone.clone())
         })
         .await??;
 
@@ -245,8 +248,7 @@ impl PendingTransfer {
         let mut sessions = HashMap::new();
 
         for ins in instructions.into_iter() {
-            // TODO: change that 2
-            let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(2);
+            let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(MAX_CONCURRENT_STREAMS.into());
             let file_id = ins.metadata.file_id;
 
             let payload = IgnitionPayload {
@@ -255,6 +257,7 @@ impl PendingTransfer {
                 rx,
                 transfer_id,
                 cancel_token: cancel_token.clone(),
+                staging: staging.clone(),
             };
 
             sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
@@ -265,6 +268,7 @@ impl PendingTransfer {
             total_size: total_remaining_size,
             job_name,
             sessions: Arc::new(sessions),
+            staging: staging.clone(),
         })
     }
 
@@ -282,6 +286,7 @@ pub struct Receiver {
     pub(super) total_size: u64,
     pub(super) job_name: String,
     pub(super) sessions: Arc<HashMap<FileId, Arc<ReceiveSession>>>,
+    pub(super) staging: Arc<TransferStaging>,
 }
 
 impl Receiver {
@@ -296,43 +301,95 @@ impl Receiver {
         for _ in 0..chunk_count {
             let mut chunk_stream = self.connection.accept_uni().await?;
             let sessions_clone = self.sessions.clone();
-            let cancel_clone = cancel_token.clone();
             let permit = semaphore.clone().acquire_owned().await?;
+            let cancel_clone = cancel_token.clone();
 
             join_set.spawn(async move {
-                if let Err(e) = async {
-                    // To capture ownership and drop on task finish (to decrease semaphore count)
-                    let _permit = permit;
+                // To capture ownership and drop on task finish (to decrease semaphore count)
+                let _permit = permit;
 
-                    let header_len = chunk_stream.read_u32().await?;
-                    let mut header_buf = vec![0u8; header_len as usize];
-                    chunk_stream.read_exact(&mut header_buf).await?;
-                    let header: ChunkHeader = rmp_serde::from_slice(&header_buf)?;
-
-                    let data_buf = chunk_stream.read_to_end(CHUNK_SIZE as usize).await?;
-
-                    let session = sessions_clone
-                        .get(&header.file_id)
-                        .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?;
-
-                    session.write_chunk(header, data_buf).await?;
-
-                    anyhow::Ok(())
-                }
-                .await
-                {
-                    if !cancel_clone.is_cancelled() {
-                        eprintln!("Error processing chunk: {:?}", e);
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        return anyhow::Ok(());
                     }
+                    res = async {
+                        let header_len = chunk_stream.read_u32().await?;
+                        let mut header_buf = vec![0u8; header_len as usize];
+                        chunk_stream.read_exact(&mut header_buf).await?;
+                        let header: ChunkHeader = rmp_serde::from_slice(&header_buf)?;
+
+                        let data_buf = chunk_stream.read_to_end(CHUNK_SIZE as usize).await?;
+                        let session = sessions_clone
+                            .get(&header.file_id)
+                            .ok_or_else(|| anyhow::anyhow!("Invalid file_id from client"))?;
+
+                        session.write_chunk(header, data_buf).await?;
+
+                        anyhow::Ok(())
+                    } => res?
                 };
+
+                anyhow::Ok(())
             });
         }
 
+        let mut has_error = false;
+
+        // Handle Network errors
         while let Some(res) = join_set.join_next().await {
-            if let Err(e) = res {
-                eprintln!("Chunk processing error: {:?}", e);
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    if !cancel_token.is_cancelled() {
+                        eprintln!("Chunk error: {e:?}");
+                        has_error = true;
+                    }
+                }
+                Err(e) => {
+                    if !cancel_token.is_cancelled() {
+                        eprintln!("Task panic: {e:?}");
+                        has_error = true;
+                    }
+                }
             }
         }
+
+        let handles: Vec<_> = self
+            .sessions
+            .values()
+            .filter_map(|s| s.writer_handle.lock().unwrap().take())
+            .collect();
+
+        // To close each tx associated with session
+        drop(self.sessions);
+
+        // Handle Disk errors
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    if !cancel_token.is_cancelled() {
+                        eprintln!("Writer failed: {e:?}");
+                        has_error = true;
+                    }
+                }
+                Err(e) => {
+                    if !cancel_token.is_cancelled() {
+                        eprintln!("Writer task panicked: {e:?}");
+                        has_error = true;
+                    }
+                }
+            }
+        }
+
+        if has_error || cancel_token.is_cancelled() {
+            anyhow::bail!("Transfer failed or was cancelled");
+        }
+
+        tokio::task::spawn_blocking(move || {
+            let _ = self.staging.cleanup();
+        })
+        .await?;
 
         self.connection.close(0u32.into(), b"Transfer Complete");
 
