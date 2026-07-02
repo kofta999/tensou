@@ -36,6 +36,7 @@ impl Metadata {
     }
 }
 
+// Borrowed from https://chromium.googlesource.com/chromium/src/+/HEAD/base/files/file_path.cc
 fn find_extension_start(file_name: &str) -> usize {
     let last_dot = match file_name.rfind('.') {
         Some(idx) if idx > 0 => idx,
