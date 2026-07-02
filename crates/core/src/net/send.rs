@@ -9,6 +9,7 @@ use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug)]
 pub struct Sender {
     connection: quinn::Connection,
     sessions: HashMap<FileId, Arc<SendSession>>,
@@ -37,7 +38,19 @@ impl Sender {
         send.write_all(&buf).await?;
         send.finish()?;
 
-        let is_accepted = recv.read_u8().await?;
+        let is_accepted = match recv.read_u8().await {
+            Ok(val) => val,
+            Err(e) => {
+                if let Some(quinn::ConnectionError::ApplicationClosed(app_close)) =
+                    connection.close_reason()
+                {
+                    let reason = String::from_utf8_lossy(&app_close.reason);
+                    anyhow::bail!("The receiver rejected your transfer request: {}", reason);
+                }
+                return Err(e.into());
+            }
+        };
+
         if is_accepted == 0 {
             anyhow::bail!("The receiver rejected your transfer request.");
         }
