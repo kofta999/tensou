@@ -389,7 +389,7 @@ mod tests {
     use super::*;
     use crate::{CHUNK_SIZE, protocol::JobInstruction};
     use rand::Rng;
-    use std::{fs, time::Duration};
+    use std::fs;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
 
@@ -441,8 +441,11 @@ mod tests {
             receive_session.write_chunk(header, bytes).await?;
         }
 
-        // Wait until disk finishes
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        let handle = receive_session.writer_handle.lock().unwrap().take();
+        drop(receive_session); // close the tx
+        if let Some(h) = handle {
+            h.await??;
+        }
 
         assert!(file_diff::diff(
             source_path.to_str().unwrap(),
