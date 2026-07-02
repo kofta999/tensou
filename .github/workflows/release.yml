@@ -1,0 +1,110 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test and Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            pkg-config
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint with Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run Workspace Tests
+        run: cargo test --workspace
+
+  package:
+    name: Package Application
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            formats: appimage
+          - os: macos-latest
+            platform: macos
+            formats: dmg
+          - os: windows-latest
+            platform: windows
+            formats: nsis
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            pkg-config
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js (for cargo-packager runner)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Build and Package
+        run: npx @crabnebula/cargo-packager --release --formats ${{ matrix.formats }}
+
+      - name: Copy Standalone Binary to Dist
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            cp target/release/tensou.exe dist/tensou.exe
+          else
+            cp target/release/tensou dist/tensou
+          fi
+
+      - name: Upload Packaged Installers and Standalone Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tensou-${{ matrix.platform }}-packages
+          path: dist/*
