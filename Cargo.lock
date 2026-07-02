@@ -1576,7 +1576,7 @@ dependencies = [
  "objc2-core-text",
  "objc2-foundation 0.3.2",
  "parlance",
- "read-fonts 0.39.2",
+ "read-fonts",
  "roxmltree",
  "smallvec",
  "windows",
@@ -1921,7 +1921,7 @@ checksum = "d12c7c642d4ce8c2e784b4751a6634bd89583912265add4a679a8882d123fbcd"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
- "read-fonts 0.39.2",
+ "read-fonts",
  "smallvec",
 ]
 
@@ -2087,7 +2087,7 @@ dependencies = [
  "icu_provider",
  "pulldown-cmark",
  "resvg",
- "skrifa 0.42.1",
+ "skrifa",
 ]
 
 [[package]]
@@ -2114,7 +2114,7 @@ dependencies = [
  "resvg",
  "rowan",
  "rspolib",
- "skrifa 0.42.1",
+ "skrifa",
  "smol_str 0.3.6",
  "strum",
  "swash",
@@ -2158,7 +2158,7 @@ dependencies = [
  "resvg",
  "rgb",
  "scopeguard",
- "skrifa 0.42.1",
+ "skrifa",
  "slab",
  "strum",
  "swash",
@@ -2212,7 +2212,7 @@ dependencies = [
  "pin-weak",
  "raw-window-handle",
  "raw-window-metal",
- "read-fonts 0.39.2",
+ "read-fonts",
  "scoped-tls-hkt",
  "skia-safe",
  "softbuffer",
@@ -2237,7 +2237,7 @@ dependencies = [
  "integer-sqrt",
  "lyon_path",
  "num-traits",
- "skrifa 0.42.1",
+ "skrifa",
  "swash",
  "zeno",
 ]
@@ -3685,7 +3685,7 @@ dependencies = [
  "linebender_resource_handle",
  "parlance",
  "parley_data",
- "skrifa 0.42.1",
+ "skrifa",
 ]
 
 [[package]]
@@ -4195,16 +4195,6 @@ dependencies = [
  "time",
  "x509-parser",
  "yasna",
-]
-
-[[package]]
-name = "read-fonts"
-version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b634fabf032fab15307ffd272149b622260f55974d9fad689292a5d33df02e5"
-dependencies = [
- "bytemuck",
- "font-types",
 ]
 
 [[package]]
@@ -4816,22 +4806,12 @@ dependencies = [
 
 [[package]]
 name = "skrifa"
-version = "0.40.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fbdfe3d2475fbd7ddd1f3e5cf8288a30eb3e5f95832829570cd88115a7434ac"
-dependencies = [
- "bytemuck",
- "read-fonts 0.37.0",
-]
-
-[[package]]
-name = "skrifa"
 version = "0.42.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c34617370ae968efb7161bb2beb517d9084659aae19e24b89e3db25b46e4564"
 dependencies = [
  "bytemuck",
- "read-fonts 0.39.2",
+ "read-fonts",
 ]
 
 [[package]]
@@ -5137,7 +5117,7 @@ version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0811b01ca2c4e8718760713911feaf4675c24f94e50530a015ec646cfb622f7c"
 dependencies = [
- "skrifa 0.40.0",
+ "skrifa",
  "yazi",
  "zeno",
 ]
@@ -5223,32 +5203,70 @@ name = "tensou"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rustls",
+ "tensou-cli",
+ "tensou-core",
+ "tensou-gui",
+ "tokio",
+]
+
+[[package]]
+name = "tensou-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "async-trait",
- "bitvec",
- "blake3",
  "clap",
  "dialoguer",
  "dirs",
+ "indicatif",
+ "tensou-core",
+ "tensou-gui",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "tensou-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitvec",
+ "blake3",
+ "dirs",
  "file_diff",
  "gethostname",
- "indicatif",
  "mdns-sd",
  "quinn",
  "rand 0.10.1",
  "rcgen",
- "rfd",
  "rmp-serde",
  "rustls",
  "serde",
  "serde_bytes",
- "slint",
- "slint-build",
  "tempfile",
  "tokio",
  "tokio-util",
  "toml",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "tensou-gui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs",
+ "rand 0.10.1",
+ "rfd",
+ "slint",
+ "slint-build",
+ "tensou-core",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -6542,7 +6560,7 @@ dependencies = [
  "indexmap",
  "kurbo",
  "log",
- "read-fonts 0.39.2",
+ "read-fonts",
 ]
 
 [[package]]

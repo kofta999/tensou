@@ -1,5 +1,5 @@
-use crate::{CHUNK_SIZE, disk::SendSession};
-use crate::{FileId, is_safe_relative_path};
+use crate::disk::SendSession;
+use crate::{CHUNK_SIZE, FileId, is_safe_relative_path};
 use anyhow::bail;
 use async_trait::async_trait;
 use bitvec::{bitvec, order::Lsb0, vec::BitVec};

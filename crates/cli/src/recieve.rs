@@ -1,9 +1,4 @@
-use crate::{
-    cli::{create_transfer_pb, resolve_save_directory},
-    config::Config,
-    net::ReceiverDaemon,
-    protocol::{TransferConsentHandler, TransferObserver},
-};
+use crate::{create_transfer_pb, resolve_save_directory};
 use async_trait::async_trait;
 use indicatif::{MultiProgress, ProgressBar};
 use std::{
@@ -11,6 +6,11 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::{Arc, Mutex},
+};
+use tensou_core::{
+    config::Config,
+    net::ReceiverDaemon,
+    protocol::{TransferConsentHandler, TransferObserver},
 };
 use tokio_util::sync::CancellationToken;
 

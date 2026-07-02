@@ -1,8 +1,10 @@
-use crate::config::Config;
-use crate::discovery::DiscoveryEvent;
-use crate::gui::state::{ConsentRegistry, GuiEvent, GuiTransfer};
-use crate::gui::{background, callbacks};
+use crate::{
+    background, callbacks,
+    state::{ConsentRegistry, GuiEvent, GuiTransfer},
+};
 use std::sync::Arc;
+use tensou_core::config::Config;
+use tensou_core::discovery::DiscoveryEvent;
 use tokio::sync::mpsc;
 
 slint::include_modules!();

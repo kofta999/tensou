@@ -1,0 +1,18 @@
+[package]
+name = "tensou-gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+dirs = "6.0.0"
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+rand = { workspace = true }
+async-trait = "0.1.89"
+slint = { version = "1.17.0", default-features = false, features = ["compat-1-2", "std", "backend-winit", "renderer-software", "software-renderer-path"] }
+rfd = "0.17.2"
+tensou-core = { path = "../core" }
+
+[build-dependencies]
+slint-build = "1.17.0"

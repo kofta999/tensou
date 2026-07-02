@@ -1,10 +1,10 @@
-use crate::discovery::DiscoveredDevice;
-use crate::protocol::{TransferConsentHandler, TransferObserver};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tensou_core::discovery::DiscoveredDevice;
+use tensou_core::protocol::{TransferConsentHandler, TransferObserver};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;

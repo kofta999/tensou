@@ -1,15 +1,15 @@
-use crate::cli::create_transfer_pb;
-use crate::config::Config;
-use crate::{
-    discovery::{self, DiscoveryEvent},
-    net::Sender,
-    protocol::TransferObserver,
-};
+use crate::create_transfer_pb;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::Arc,
+};
+use tensou_core::config::Config;
+use tensou_core::{
+    discovery::{self, DiscoveryEvent},
+    net::Sender,
+    protocol::TransferObserver,
 };
 use tokio::{
     io::{self, AsyncBufReadExt},
