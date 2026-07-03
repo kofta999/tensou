@@ -39,3 +39,21 @@ lto = true          # Enable Link-Time Optimization (LTO)
 codegen-units = 1   # Limit to 1 codegen unit to enable full LTO optimizations
 panic = "abort"     # Remove unwinding information (reduces binary size)
 strip = true        # Automatically strip debug symbols from binary
+
+[package.metadata.packager]
+product-name = "Tensou"
+identifier = "com.tensou.app"
+version = "0.1.0"
+authors = ["kofta999"]
+publisher = "kofta999"
+description = "A fast and secure file transfer tool built with QUIC and Slint."
+homepage = "https://github.com"
+out-dir = "./dist"
+before-packaging-command = "cargo build --release"
+binaries-dir = "target/release"
+formats = ["appimage"]
+icons = ["assets/icon.png"]
+
+[[package.metadata.packager.binaries]]
+main = true
+path = "tensou"

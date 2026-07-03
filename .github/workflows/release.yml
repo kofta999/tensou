@@ -93,7 +93,7 @@ jobs:
       - name: Install Node.js (for cargo-packager runner)
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Run Build and Package
         run: npx @crabnebula/packager --release --formats ${{ matrix.formats }}
