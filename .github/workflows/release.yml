@@ -96,7 +96,7 @@ jobs:
           node-version: 20
 
       - name: Run Build and Package
-        run: npx @crabnebula/cargo-packager --release --formats ${{ matrix.formats }}
+        run: npx @crabnebula/packager --release --formats ${{ matrix.formats }}
 
       - name: Copy Standalone Binary to Dist
         shell: bash
