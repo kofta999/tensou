@@ -91,12 +91,13 @@ impl ReceiverDaemon {
                     .await
                     {
                         Ok(Ok(pending)) => {
+
                             let is_accepted = consent_clone
                                 .request_consent(peer, &pending.manifest.job_name)
                                 .await;
 
-                            if is_accepted {
-                                let receiver = pending
+                             if is_accepted {
+                                let receiver = match pending
                                     .accept(
                                         &target_dir_clone,
                                         observer_clone.clone(),
@@ -104,7 +105,14 @@ impl ReceiverDaemon {
                                         conn_cancel_token.clone(),
                                         config_clone.overwrite_dest
                                     )
-                                    .await?;
+                                    .await
+                                {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                        return anyhow::Ok(());
+                                    }
+                                };
 
                                 observer_clone.on_transfer_started(
                                     transfer_id,
@@ -202,6 +210,23 @@ impl PendingTransfer {
         })
     }
 
+    async fn is_space_available(remaining_size: u64, path: &Path) -> bool {
+        let path_clone = path.to_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            // Resolve nearest existing ancestor if the destination directory doesn't exist yet
+            let check_path = path_clone
+                .ancestors()
+                .find(|p| p.exists())
+                .unwrap_or(&path_clone);
+            // Fail open (if can't check then just gamble on space)
+            let available_size = fs4::available_space(check_path).unwrap_or(u64::MAX);
+            remaining_size <= available_size
+        })
+        .await
+        .unwrap_or(true)
+    }
+
     pub async fn accept(
         mut self,
         target_dir: &Path,
@@ -210,8 +235,6 @@ impl PendingTransfer {
         cancel_token: CancellationToken,
         overwrite: bool,
     ) -> anyhow::Result<Receiver> {
-        self.send_stream.write_u8(1).await?;
-
         let is_single_file =
             self.manifest.files.len() == 1 && self.manifest.files[0].relative_path.is_empty();
 
@@ -239,6 +262,16 @@ impl PendingTransfer {
                     states.push(&ins.state);
                     (total + ins.remaining_bytes, states)
                 });
+
+        if !Self::is_space_available(total_remaining_size, target_dir).await {
+            let _ = staging.cleanup();
+            let _ = self.send_stream.write_u8(0).await;
+            let _ = self.send_stream.finish();
+            self.connection.close(0u32.into(), b"DiskFull");
+            anyhow::bail!("No available space for the transfer");
+        }
+
+        self.send_stream.write_u8(1).await?;
 
         let state_buf = rmp_serde::to_vec(&states)?;
 
