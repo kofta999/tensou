@@ -5,6 +5,7 @@ pub const CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 pub const MAX_METADATA_SIZE: u64 = 64 * 1024 * 1024;
 pub const MAX_CONCURRENT_STREAMS: u16 = 8;
 pub const SERVICE_TYPE: &str = "_tensou._udp.local.";
+pub const STAGING_DIR_NAME: &str = ".tensou";
 
 // According to the robot:
 // This tells the sender "you can have up to 8 MB of unacknowledged data in flight." On a LAN with ~0.1ms RTT, you only need:

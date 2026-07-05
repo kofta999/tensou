@@ -23,6 +23,7 @@ impl Sender {
         path: &Path,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
+        log::info!("Preparing transfer manifest for: {}", path.display());
         let (manifest, sessions) = ManifestManager::build(path)?;
 
         let client_cfg = Self::configure_client()?;
@@ -30,14 +31,18 @@ impl Sender {
         let mut endpoint = Endpoint::client(bind_addr)?;
         endpoint.set_default_client_config(client_cfg);
 
+        log::info!("Connecting to remote receiver at {}...", server_addr);
         let connection = endpoint.connect(server_addr, "localhost")?.await?;
+        log::debug!("QUIC connection established with {}", server_addr);
 
         let (mut send, mut recv) = connection.open_bi().await?;
         let buf = rmp_serde::to_vec(&manifest)?;
 
+        log::debug!("Sending manifest metadata...");
         send.write_all(&buf).await?;
         send.finish()?;
 
+        log::debug!("Waiting for transfer consent response...");
         let is_accepted = match recv.read_u8().await {
             Ok(val) => val,
             Err(e) => {
@@ -45,6 +50,7 @@ impl Sender {
                     connection.close_reason()
                 {
                     let reason = String::from_utf8_lossy(&app_close.reason);
+                    log::warn!("Transfer request rejected by remote: {}", reason);
                     anyhow::bail!("The receiver rejected your transfer request: {}", reason);
                 }
                 return Err(e.into());
@@ -52,11 +58,14 @@ impl Sender {
         };
 
         if is_accepted == 0 {
+            log::warn!("Transfer request rejected by remote user.");
             anyhow::bail!("The receiver rejected your transfer request.");
         }
 
+        log::info!("Transfer accepted. Reading remote states...");
         let buf = recv.read_to_end(MAX_METADATA_SIZE as usize).await?;
         let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;
+        log::debug!("Successfully loaded remote transfer state.");
 
         Ok(Self {
             connection,
@@ -79,6 +88,8 @@ impl Sender {
     pub async fn process_chunks(self, observer: Arc<dyn TransferObserver>) -> anyhow::Result<()> {
         let task_list = self.flatten();
         let chunk_count = task_list.len();
+
+        log::debug!("Preparing to transmit {} chunks...", chunk_count);
 
         let mut send = self.connection.open_uni().await?;
         send.write_all(&rmp_serde::to_vec(&chunk_count)?).await?;
@@ -106,13 +117,11 @@ impl Sender {
 
                     stream_result = async {
                         let mut stream = conn_clone.clone().open_uni().await?;
-                        // To capture ownership and drop on task finish (to decrease semaphore count)
                         let _permit = permit;
 
                         let (header, buf) = session_clone.get_chunk(chunk_id).await?;
                         let buf_len = buf.len() as u64;
 
-                        // Very lightweight
                         let header_bytes = rmp_serde::to_vec(&header)?;
                         let header_len = header_bytes.len() as u32;
 
@@ -137,12 +146,24 @@ impl Sender {
         }
 
         while let Some(res) = join_set.join_next().await {
-            res??;
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    log::error!("Chunk transmission failed: {e:?}");
+                    return Err(e);
+                }
+                Err(e) => {
+                    log::error!("Chunk task panicked: {e:?}");
+                    return Err(e.into());
+                }
+            }
         }
 
         if self.cancel_token.is_cancelled() {
+            log::info!("Transfer cancelled by sender.");
             self.connection.close(1u32.into(), b"Cancelled by sender");
         } else {
+            log::info!("All chunks transmitted successfully. Closing connection...");
             self.connection.closed().await;
         }
 

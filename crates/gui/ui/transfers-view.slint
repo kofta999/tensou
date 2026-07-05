@@ -1,4 +1,4 @@
-import { ListView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Transfer } from "types.slint";
 import { ProgressBar, ZenButton } from "components.slint";
 import { Theme, AppData, Logic } from "globals.slint";
@@ -7,87 +7,151 @@ export component TransfersView inherits VerticalLayout {
     padding: 24px;
     spacing: 16px;
 
-    Text {
-        text: "Active Transfers Monitor";
-        font-size: 16px;
-        font-weight: 800;
-        color: Theme.text-primary;
-    }
+    ScrollView {
+        VerticalLayout {
+            spacing: 24px;
 
-    if AppData.active_transfers.length == 0: VerticalLayout {
-        alignment: center;
-        height: 220px;
-        spacing: 12px;
-        Text {
-            text: "No active file transfers.";
-            color: Theme.text-secondary;
-            horizontal-alignment: center;
-            font-size: 14px;
-        }
+            // Active Transfers Section
+            VerticalLayout {
+                spacing: 12px;
+                
+                Text {
+                    text: "Active Transfers (" + AppData.active_transfers.length + ")";
+                    font-size: 16px;
+                    font-weight: 800;
+                    color: Theme.text-primary;
+                }
 
-        Text {
-            text: "Choose a device on the 'Send' tab to start transferring files.";
-            color: Theme.text-secondary;
-            font-size: 12px;
-            horizontal-alignment: center;
-        }
-    }
+                if AppData.active_transfers.length == 0 : VerticalLayout {
+                    alignment: center;
+                    height: 100px;
+                    Text {
+                        text: "No active file transfers.";
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                        font-size: 14px;
+                    }
+                }
 
-    if AppData.active_transfers.length > 0: ListView {
-        height: 380px;
-        for transfer in AppData.active_transfers: VerticalLayout {
-            padding-bottom: 12px;
-
-            Rectangle {
-                background: Theme.background; // Void card background
-                border-radius: 12px;
-                border-width: 1px;
-                border-color: Theme.surface-hover;
-
-                VerticalLayout {
-                    padding: 16px;
+                if AppData.active_transfers.length > 0 : VerticalLayout {
                     spacing: 12px;
+                    for transfer in AppData.active_transfers : Rectangle {
+                        background: Theme.background;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: Theme.surface-hover;
 
-                    HorizontalLayout {
-                        alignment: space-between;
-                        Text {
-                            text: (transfer.is_sender ? "Sending: " : "Receiving: ") + transfer.job_name;
-                            color: #ffffff;
-                            font-weight: 800;
-                            font-size: 14px;
-                            width: 200px;
-                            overflow: elide;
-                        }
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
 
-                        ZenButton {
-                            text: "Cancel";
-                            width: 72px;
-                            height: 32px;
-                            clicked => {
-                                Logic.cancel_transfer(transfer.id);
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: (transfer.is_sender ? "Sending: " : "Receiving: ") + transfer.job_name;
+                                    color: #ffffff;
+                                    font-weight: 800;
+                                    font-size: 14px;
+                                    width: 200px;
+                                    overflow: elide;
+                                }
+
+                                ZenButton {
+                                    text: "Cancel";
+                                    width: 72px;
+                                    height: 32px;
+                                    clicked => {
+                                        Logic.cancel_transfer(transfer.id);
+                                    }
+                                }
+                            }
+
+                            ProgressBar {
+                                progress: transfer.progress;
+                                is_sender: transfer.is_sender;
+                            }
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: transfer.bytes_transferred + " / " + transfer.total_bytes;
+                                    color: Theme.text-secondary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: transfer.speed_eta;
+                                    color: Theme.text-secondary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
                             }
                         }
                     }
+                }
+            }
 
-                    ProgressBar {
-                        progress: transfer.progress;
-                        is_sender: transfer.is_sender;
-                    }
+            // Completed Transfers Section
+            if AppData.completed_transfers.length > 0 : VerticalLayout {
+                spacing: 12px;
 
-                    HorizontalLayout {
-                        alignment: space-between;
-                        Text {
-                            text: transfer.bytes_transferred + " / " + transfer.total_bytes;
-                            color: Theme.text-secondary;
-                            font-size: 12px;
-                            font-weight: 600;
-                        }
+                Text {
+                    text: "Session History (" + AppData.completed_transfers.length + ")";
+                    font-size: 16px;
+                    font-weight: 800;
+                    color: Theme.text-primary;
+                }
 
-                        Text {
-                            text: transfer.speed_eta;
-                            color: Theme.text-secondary;
-                            font-size: 12px;
-                            font-weight: 600;
+                VerticalLayout {
+                    spacing: 12px;
+                    for transfer in AppData.completed_transfers : Rectangle {
+                        background: Theme.background;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: Theme.surface-hover;
+
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: (transfer.is_sender ? "Sent: " : "Received: ") + transfer.job_name;
+                                    color: Theme.success;
+                                    font-weight: 800;
+                                    font-size: 14px;
+                                    width: 200px;
+                                    overflow: elide;
+                                }
+
+                                ZenButton {
+                                    text: "Open Folder";
+                                    width: 110px;
+                                    height: 32px;
+                                    clicked => {
+                                        Logic.open_transfer_folder(transfer.id);
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: "Size: " + transfer.total_bytes;
+                                    color: Theme.text-secondary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: "Completed";
+                                    color: Theme.success;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                            }
                         }
                     }
                 }

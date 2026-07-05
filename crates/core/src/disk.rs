@@ -1,6 +1,9 @@
-use crate::protocol::{
-    ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
-    State, TransferObserver,
+use crate::{
+    STAGING_DIR_NAME,
+    protocol::{
+        ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
+        State, TransferObserver,
+    },
 };
 use std::{
     path::{Path, PathBuf},
@@ -109,7 +112,9 @@ impl DiskWriter {
         loop {
             tokio::select! {
                 _ = self.cancel_token.cancelled() =>  {
-                    self.save_state().await?;
+                    if !self.is_complete() && self.is_resumed {
+                        self.save_state().await?;
+                    }
                     return Ok(())
                 }
 
@@ -154,6 +159,9 @@ impl DiskWriter {
     }
 
     async fn save_state(&self) -> anyhow::Result<()> {
+        if self.metadata.size <= self.metadata.chunk_size {
+            return Ok(());
+        }
         tokio::fs::write(
             &self.staging.state_path(&self.metadata.relative_path),
             self.state.0.as_raw_slice(),
@@ -166,14 +174,31 @@ impl DiskWriter {
         if packet.header.hash == ChunkHeader::hash_chunk(&packet.bytes) {
             let offset = packet.header.index * self.metadata.chunk_size;
             let part_path = self.staging.part_path(&self.metadata.relative_path);
+            let final_path = self.staging.final_path(&self.metadata.relative_path);
+            let is_small = self.metadata.size <= self.metadata.chunk_size;
+
+            let write_path = if is_small {
+                &final_path
+            } else {
+                &part_path
+            };
 
             if self.file.is_none() {
-                self.staging
-                    .create_file_staging_dir(&self.metadata.relative_path)?;
+                if is_small {
+                    self.staging
+                        .create_file_destination_dir(&self.metadata.relative_path)?;
+                } else {
+                    self.staging
+                        .create_file_staging_dir(&self.metadata.relative_path)?;
+                }
             }
 
             if !self.is_resumed {
-                Self::allocate_sparse_file(&part_path, self.metadata.size).await?;
+                if is_small {
+                    tokio::fs::File::create(write_path).await?;
+                } else {
+                    Self::allocate_sparse_file(write_path, self.metadata.size).await?;
+                }
                 self.is_resumed = true;
             }
 
@@ -181,7 +206,7 @@ impl DiskWriter {
                 let file = tokio::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(&part_path)
+                    .open(write_path)
                     .await?;
                 self.file = Some(file);
             }
@@ -204,7 +229,6 @@ impl DiskWriter {
     }
 
     fn commit(&mut self) -> anyhow::Result<()> {
-        // Drop the open file handle so it is closed and we can rename/remove it
         self.file = None;
 
         let state_path = self.staging.state_path(&self.metadata.relative_path);
@@ -212,12 +236,15 @@ impl DiskWriter {
             std::fs::remove_file(state_path)?;
         }
 
-        self.staging
-            .create_file_destination_dir(&self.metadata.relative_path)?;
+        let is_small = self.metadata.size <= self.metadata.chunk_size;
+        if !is_small {
+            self.staging
+                .create_file_destination_dir(&self.metadata.relative_path)?;
 
-        let part_path = self.staging.part_path(&self.metadata.relative_path);
-        let final_path = self.staging.final_path(&self.metadata.relative_path);
-        std::fs::rename(part_path, final_path)?;
+            let part_path = self.staging.part_path(&self.metadata.relative_path);
+            let final_path = self.staging.final_path(&self.metadata.relative_path);
+            std::fs::rename(part_path, final_path)?;
+        }
 
         Ok(())
     }
@@ -284,7 +311,10 @@ impl TransferStaging {
         is_single_file: bool,
     ) -> Self {
         let base_path = downloads_dir.join(job_name);
-        let unique_path = if overwrite {
+        let has_staging_dir = std::fs::read_dir(base_path.join(STAGING_DIR_NAME))
+            .map(|mut i| i.next().is_some())
+            .unwrap_or(false);
+        let unique_path = if overwrite || has_staging_dir {
             base_path
         } else {
             crate::protocol::find_unique_path(&base_path)
@@ -302,7 +332,7 @@ impl TransferStaging {
         };
 
         Self {
-            staging_dir: dest_dir.join(".tensou"),
+            staging_dir: dest_dir.join(STAGING_DIR_NAME),
             dest_dir,
             job_name: resolved_job_name,
             is_single_file,
@@ -387,7 +417,7 @@ impl TransferStaging {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CHUNK_SIZE, protocol::JobInstruction};
+    use crate::{CHUNK_SIZE, STAGING_DIR_NAME, protocol::JobInstruction};
     use rand::Rng;
     use std::fs;
     use tempfile::tempdir;
@@ -410,20 +440,20 @@ mod tests {
 
         assert_eq!(
             staging.staging_dir,
-            dir.path().join("MyPhotos").join(".tensou")
+            dir.path().join("MyPhotos").join(STAGING_DIR_NAME)
         );
         assert_eq!(
             staging.part_path("nested/img.jpg"),
             dir.path()
                 .join("MyPhotos")
-                .join(".tensou")
+                .join(STAGING_DIR_NAME)
                 .join("nested/img.jpg.part")
         );
         assert_eq!(
             staging.state_path("nested/img.jpg"),
             dir.path()
                 .join("MyPhotos")
-                .join(".tensou")
+                .join(STAGING_DIR_NAME)
                 .join("nested/img.jpg.state")
         );
         assert_eq!(
@@ -438,14 +468,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let staging = make_staging(dir.path(), "photo.jpg", true);
 
-        assert_eq!(staging.staging_dir, dir.path().join(".tensou"));
+        assert_eq!(staging.staging_dir, dir.path().join(STAGING_DIR_NAME));
         assert_eq!(
             staging.part_path(""),
-            dir.path().join(".tensou").join("photo.jpg.part")
+            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.part")
         );
         assert_eq!(
             staging.state_path(""),
-            dir.path().join(".tensou").join("photo.jpg.state")
+            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.state")
         );
         assert_eq!(staging.final_path(""), dir.path().join("photo.jpg"));
     }

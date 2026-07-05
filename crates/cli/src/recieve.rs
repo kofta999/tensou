@@ -98,7 +98,7 @@ pub async fn run(port: u16, output: Option<PathBuf>) -> anyhow::Result<()> {
     let mut config = Config::load_or_create();
     config.target_dir = target_dir.clone();
 
-    let daemon = ReceiverDaemon::new(bind_addr, config)?;
+    let daemon = ReceiverDaemon::new(bind_addr, Arc::new(Mutex::new(config)))?;
 
     println!("Listening on port {}", daemon.local_addr()?.port());
     println!("Saving files to: {}", target_dir.display());

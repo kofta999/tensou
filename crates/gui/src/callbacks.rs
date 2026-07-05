@@ -20,6 +20,7 @@ pub fn setup(
     consent_registry: Arc<ConsentRegistry>,
     config: Arc<Mutex<Config>>,
     local_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
+    local_completed_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
 ) {
     let direct_ip = Arc::new(std::sync::Mutex::new(String::new()));
 
@@ -43,7 +44,7 @@ pub fn setup(
                     send_file_background(event_tx.clone(), target_addr, path);
                 }
             } else {
-                println!("Invalid target IP address");
+                log::warn!("Invalid target IP address");
             }
         }
     });
@@ -60,7 +61,7 @@ pub fn setup(
                     send_file_background(event_tx.clone(), target_addr, path);
                 }
             } else {
-                println!("Invalid target IP address");
+                log::warn!("Invalid target IP address");
             }
         }
     });
@@ -150,13 +151,28 @@ pub fn setup(
     });
 
     // Cancel Transfer
-    main_window
-        .global::<Logic>()
-        .on_cancel_transfer(move |transfer_id| {
-            println!("Cancel clicked for transfer: {}", transfer_id);
+    main_window.global::<Logic>().on_cancel_transfer({
+        let local_transfers = local_transfers.clone();
+        move |transfer_id| {
+            log::info!("Cancel clicked for transfer: {}", transfer_id);
             let transfers = local_transfers.lock().unwrap();
             if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
                 transfer.cancel_token.cancel();
+            }
+        }
+    });
+
+    // Open Transfer Folder
+    main_window
+        .global::<Logic>()
+        .on_open_transfer_folder(move |transfer_id| {
+            let completed = local_completed_transfers.lock().unwrap();
+            if let Some(t) = completed.iter().find(|x| x.id == transfer_id as u32) {
+                log::info!(
+                    "Opening folder for completed transfer: {}",
+                    t.local_dir.display()
+                );
+                let _ = open::that(&t.local_dir);
             }
         });
 }
@@ -177,6 +193,11 @@ fn send_file_background(
 
         match net::Sender::connect(target_addr, &path, CancellationToken::new()).await {
             Ok(client) => {
+                let local_dir = path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| path.clone());
+
                 let total_bytes = client.get_remaining_bytes();
                 let _ = tx_clone.send(GuiEvent::TransferStarted {
                     transfer_id,
@@ -184,12 +205,14 @@ fn send_file_background(
                     job_name: job_name.clone(),
                     total_bytes,
                     cancel_token: client.cancel_token.clone(),
+                    local_dir: local_dir.clone(),
                 });
 
                 let observer = std::sync::Arc::new(crate::state::GuiTransferObserver {
                     transfer_id,
                     tx: tx_clone.clone(),
                     is_sender: true,
+                    target_dir: local_dir,
                 });
 
                 match client.process_chunks(observer).await {

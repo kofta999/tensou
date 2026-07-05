@@ -65,7 +65,7 @@ impl Config {
         {
             match toml::from_str::<Config>(&content) {
                 Ok(config) => return config,
-                Err(e) => eprintln!("Config parsing error: {e}"),
+                Err(e) => log::error!("Config parsing error: {e}"),
             }
         }
 

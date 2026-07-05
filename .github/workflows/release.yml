@@ -61,9 +61,9 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             formats: appimage
-          - os: macos-latest
-            platform: macos
-            formats: dmg
+          # - os: macos-latest
+          #   platform: macos
+          #   formats: dmg
           - os: windows-latest
             platform: windows
             formats: nsis
