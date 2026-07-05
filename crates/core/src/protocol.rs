@@ -76,7 +76,12 @@ pub fn find_unique_path(path: &Path) -> PathBuf {
     let mut counter = 1;
 
     loop {
-        let new_file_name = format!("{} ({}){}", stem, counter, ext);
+        let new_file_name = if path.is_dir() {
+            format!("{} ({})", file_name, counter)
+        } else {
+            format!("{} ({}){}", stem, counter, ext)
+        };
+
         let new_path = parent.join(new_file_name);
 
         if !new_path.exists() {
