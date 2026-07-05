@@ -198,7 +198,10 @@ pub(super) struct PendingTransfer {
 
 impl PendingTransfer {
     pub async fn read_manifest(connection: quinn::Connection) -> anyhow::Result<Self> {
-        log::debug!("Receiving handshake request from {}...", connection.remote_address());
+        log::debug!(
+            "Receiving handshake request from {}...",
+            connection.remote_address()
+        );
         let (send_stream, mut recv_stream) = connection.accept_bi().await?;
 
         let buf = recv_stream.read_to_end(MAX_METADATA_SIZE as usize).await?;

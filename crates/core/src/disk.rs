@@ -1,6 +1,9 @@
-use crate::protocol::{
-    ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
-    State, TransferObserver,
+use crate::{
+    STAGING_DIR_NAME,
+    protocol::{
+        ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
+        State, TransferObserver,
+    },
 };
 use std::{
     path::{Path, PathBuf},
@@ -284,7 +287,10 @@ impl TransferStaging {
         is_single_file: bool,
     ) -> Self {
         let base_path = downloads_dir.join(job_name);
-        let unique_path = if overwrite {
+        let has_staging_dir = std::fs::read_dir(base_path.join(STAGING_DIR_NAME))
+            .map(|mut i| i.next().is_some())
+            .unwrap_or(false);
+        let unique_path = if overwrite || has_staging_dir {
             base_path
         } else {
             crate::protocol::find_unique_path(&base_path)
@@ -302,7 +308,7 @@ impl TransferStaging {
         };
 
         Self {
-            staging_dir: dest_dir.join(".tensou"),
+            staging_dir: dest_dir.join(STAGING_DIR_NAME),
             dest_dir,
             job_name: resolved_job_name,
             is_single_file,
@@ -387,7 +393,7 @@ impl TransferStaging {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CHUNK_SIZE, protocol::JobInstruction};
+    use crate::{CHUNK_SIZE, STAGING_DIR_NAME, protocol::JobInstruction};
     use rand::Rng;
     use std::fs;
     use tempfile::tempdir;
@@ -410,20 +416,20 @@ mod tests {
 
         assert_eq!(
             staging.staging_dir,
-            dir.path().join("MyPhotos").join(".tensou")
+            dir.path().join("MyPhotos").join(STAGING_DIR_NAME)
         );
         assert_eq!(
             staging.part_path("nested/img.jpg"),
             dir.path()
                 .join("MyPhotos")
-                .join(".tensou")
+                .join(STAGING_DIR_NAME)
                 .join("nested/img.jpg.part")
         );
         assert_eq!(
             staging.state_path("nested/img.jpg"),
             dir.path()
                 .join("MyPhotos")
-                .join(".tensou")
+                .join(STAGING_DIR_NAME)
                 .join("nested/img.jpg.state")
         );
         assert_eq!(
@@ -438,14 +444,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let staging = make_staging(dir.path(), "photo.jpg", true);
 
-        assert_eq!(staging.staging_dir, dir.path().join(".tensou"));
+        assert_eq!(staging.staging_dir, dir.path().join(STAGING_DIR_NAME));
         assert_eq!(
             staging.part_path(""),
-            dir.path().join(".tensou").join("photo.jpg.part")
+            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.part")
         );
         assert_eq!(
             staging.state_path(""),
-            dir.path().join(".tensou").join("photo.jpg.state")
+            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.state")
         );
         assert_eq!(staging.final_path(""), dir.path().join("photo.jpg"));
     }

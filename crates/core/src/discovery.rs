@@ -43,7 +43,12 @@ pub fn register_service(config: &Config) -> anyhow::Result<ServiceDaemon> {
     )?
     .enable_addr_auto();
 
-    log::info!("Registering mDNS service: {} ({}.local.) on port {}", instance_name, hostname.to_lowercase(), config.listen_port);
+    log::info!(
+        "Registering mDNS service: {} ({}.local.) on port {}",
+        instance_name,
+        hostname.to_lowercase(),
+        config.listen_port
+    );
     daemon.register(service_info)?;
 
     Ok(daemon)

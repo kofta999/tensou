@@ -138,7 +138,12 @@ impl JobInstruction {
         }
     }
 
-    pub fn load_state_from_disk(&mut self, state_file_path: &Path) -> anyhow::Result<()> {
+    pub fn load_state_from_disk(
+        &mut self,
+        state_file_path: &Path,
+        final_file_path: &Path,
+    ) -> anyhow::Result<()> {
+        // Partial Transfer -> State file exists
         if state_file_path.exists() {
             let state_bytes = fs::read(state_file_path)?;
             let mut bitvec: BitVec<u8, Lsb0> = BitVec::from_vec(state_bytes);
@@ -147,8 +152,16 @@ impl JobInstruction {
             self.is_resumed = true;
             self.state = State(bitvec);
             self.remaining_bytes = self.get_remaining_size();
+        // File Already Transferred -> Assume state file is all 1s
+        } else if let Ok(metadata) = fs::metadata(final_file_path)
+            && metadata.len() == self.metadata.size
+        {
+            self.is_resumed = true;
+            self.state.0.fill(true);
+            self.remaining_bytes = 0;
         }
 
+        // File does not exist -> new transfer
         Ok(())
     }
 
@@ -181,7 +194,8 @@ impl ManifestManager {
 
             let mut instruction = JobInstruction::new(metadata);
             let state_path = &staging.state_path(&instruction.metadata.relative_path);
-            instruction.load_state_from_disk(state_path)?;
+            let final_path = &staging.final_path(&instruction.metadata.relative_path);
+            instruction.load_state_from_disk(state_path, final_path)?;
 
             instructions.push(instruction);
         }
@@ -385,7 +399,8 @@ mod tests {
         let state_file = dir.path().join("resume.state");
         std::fs::write(&state_file, bv.as_raw_slice()).unwrap();
 
-        ins.load_state_from_disk(&state_file).unwrap();
+        let final_file = dir.path().join("resume.final");
+        ins.load_state_from_disk(&state_file, &final_file).unwrap();
 
         assert!(ins.is_resumed);
         assert!(ins.state.0[0]);
@@ -403,11 +418,38 @@ mod tests {
             chunk_size: 4,
         };
         let mut ins = JobInstruction::new(m);
-        ins.load_state_from_disk(std::path::Path::new("/tmp/does_not_exist_xyz.state"))
-            .unwrap();
+        ins.load_state_from_disk(
+            std::path::Path::new("/tmp/does_not_exist_xyz.state"),
+            std::path::Path::new("/tmp/does_not_exist_xyz.final"),
+        )
+        .unwrap();
 
         assert!(!ins.is_resumed);
         assert_eq!(ins.remaining_bytes, 8);
+    }
+
+    /// Verifies that load_state_from_disk marks the instruction as fully completed if the final file exists and matches size.
+    #[test]
+    fn job_instruction_load_state_completed_file() {
+        let dir = tempdir().unwrap();
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "already_done.txt".into(),
+            size: 12,
+            chunk_size: 4,
+        };
+        let mut ins = JobInstruction::new(m);
+
+        let final_file = dir.path().join("already_done.txt");
+        std::fs::write(&final_file, b"hello world\n").unwrap();
+
+        let state_file = dir.path().join("already_done.state");
+
+        ins.load_state_from_disk(&state_file, &final_file).unwrap();
+
+        assert!(ins.is_resumed);
+        assert!(ins.state.0.all());
+        assert_eq!(ins.remaining_bytes, 0);
     }
 
     /// Verifies that ManifestManager::build correctly constructs a manifest for a single file.

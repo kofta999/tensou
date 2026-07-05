@@ -89,9 +89,17 @@ pub enum GuiEvent {
         cancel_token: CancellationToken,
         local_dir: std::path::PathBuf,
     },
-    ChunkTransferred { transfer_id: u32, bytes: u64 },
-    TransferFinished { transfer_id: u32 },
-    TransferFailed { transfer_id: u32, error: String },
+    ChunkTransferred {
+        transfer_id: u32,
+        bytes: u64,
+    },
+    TransferFinished {
+        transfer_id: u32,
+    },
+    TransferFailed {
+        transfer_id: u32,
+        error: String,
+    },
     IncomingConsentRequest {
         transfer_id: u32,
         peer: SocketAddr,

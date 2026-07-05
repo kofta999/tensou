@@ -151,18 +151,16 @@ pub fn setup(
     });
 
     // Cancel Transfer
-    main_window
-        .global::<Logic>()
-        .on_cancel_transfer({
-            let local_transfers = local_transfers.clone();
-            move |transfer_id| {
-                log::info!("Cancel clicked for transfer: {}", transfer_id);
-                let transfers = local_transfers.lock().unwrap();
-                if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
-                    transfer.cancel_token.cancel();
-                }
+    main_window.global::<Logic>().on_cancel_transfer({
+        let local_transfers = local_transfers.clone();
+        move |transfer_id| {
+            log::info!("Cancel clicked for transfer: {}", transfer_id);
+            let transfers = local_transfers.lock().unwrap();
+            if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
+                transfer.cancel_token.cancel();
             }
-        });
+        }
+    });
 
     // Open Transfer Folder
     main_window
@@ -170,7 +168,10 @@ pub fn setup(
         .on_open_transfer_folder(move |transfer_id| {
             let completed = local_completed_transfers.lock().unwrap();
             if let Some(t) = completed.iter().find(|x| x.id == transfer_id as u32) {
-                log::info!("Opening folder for completed transfer: {}", t.local_dir.display());
+                log::info!(
+                    "Opening folder for completed transfer: {}",
+                    t.local_dir.display()
+                );
                 let _ = open::that(&t.local_dir);
             }
         });
