@@ -44,6 +44,7 @@ pub fn run() -> anyhow::Result<()> {
     tokio::spawn(async move {
         let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), config.listen_port);
 
+        let target_dir = config_clone.target_dir.clone();
         if let Ok(daemon) = ReceiverDaemon::new(bind_addr, config_clone) {
             let cancel_token = CancellationToken::new();
 
@@ -51,6 +52,7 @@ pub fn run() -> anyhow::Result<()> {
                 transfer_id: 0,
                 tx: daemon_event_tx.clone(),
                 is_sender: false,
+                target_dir,
             });
 
             let consent_handler = Arc::new(GuiConsentHandler {

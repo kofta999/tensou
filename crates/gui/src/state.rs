@@ -77,22 +77,20 @@ pub struct GuiTransfer {
     pub bytes_transferred: u64,
     pub start_time: Instant,
     pub cancel_token: CancellationToken,
+    pub local_dir: std::path::PathBuf,
 }
 
 pub enum GuiEvent {
-    /// A new transfer has started
     TransferStarted {
         transfer_id: u32,
         is_sender: bool,
         job_name: String,
         total_bytes: u64,
         cancel_token: CancellationToken,
+        local_dir: std::path::PathBuf,
     },
-    /// A chunk of bytes was successfully transferred
     ChunkTransferred { transfer_id: u32, bytes: u64 },
-    /// The transfer has finished successfully
     TransferFinished { transfer_id: u32 },
-    /// The transfer failed or was cancelled
     TransferFailed { transfer_id: u32, error: String },
     IncomingConsentRequest {
         transfer_id: u32,
@@ -105,6 +103,7 @@ pub struct GuiTransferObserver {
     pub transfer_id: u32,
     pub tx: UnboundedSender<GuiEvent>,
     pub is_sender: bool,
+    pub target_dir: std::path::PathBuf,
 }
 
 impl TransferObserver for GuiTransferObserver {
@@ -122,6 +121,7 @@ impl TransferObserver for GuiTransferObserver {
             job_name: job_name.to_string(),
             total_bytes,
             cancel_token,
+            local_dir: self.target_dir.clone(),
         });
     }
 

@@ -40,6 +40,7 @@ pub fn run_gui(
     }
 
     let local_transfers = Arc::new(std::sync::Mutex::new(Vec::<GuiTransfer>::new()));
+    let local_completed_transfers = Arc::new(std::sync::Mutex::new(Vec::<GuiTransfer>::new()));
 
     // Create a mutable model and attach it to the UI immediately
     let initial_transfers_model = std::rc::Rc::new(slint::VecModel::<Transfer>::default());
@@ -47,16 +48,27 @@ pub fn run_gui(
         .global::<AppData>()
         .set_active_transfers(initial_transfers_model.clone().into());
 
+    let initial_completed_model = std::rc::Rc::new(slint::VecModel::<Transfer>::default());
+    main_window
+        .global::<AppData>()
+        .set_completed_transfers(initial_completed_model.clone().into());
+
     callbacks::setup(
         &main_window,
         event_tx,
         consent_registry,
         config_state,
         local_transfers.clone(),
+        local_completed_transfers.clone(),
     );
 
     background::spawn_discovery(&main_window_weak, devices_rx);
-    background::spawn_transfers(&main_window_weak, local_transfers, event_rx);
+    background::spawn_transfers(
+        &main_window_weak,
+        local_transfers,
+        local_completed_transfers,
+        event_rx,
+    );
 
     main_window.run()?;
     Ok(())

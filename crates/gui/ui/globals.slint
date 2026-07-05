@@ -15,6 +15,7 @@ export global Theme {
 export global AppData {
     in property <[Device]> devices: [];
     in property <[Transfer]> active_transfers: [];
+    in property <[Transfer]> completed_transfers: [];
     in-out property <string> direct_ip: "";
 
     // Config preferences loaded from Rust
@@ -39,6 +40,7 @@ export global Logic {
     callback device_send_file(Device);
     callback device_send_folder(Device);
     callback cancel_transfer(int);
+    callback open_transfer_folder(int);
     callback change_download_dir();
     callback consent_response(int, bool); // transfer_id, accepted
     callback direct_ip_changed(string);

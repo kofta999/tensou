@@ -63,13 +63,16 @@ pub fn spawn_discovery(
 pub fn spawn_transfers(
     main_window_weak: &Weak<MainWindow>,
     local_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
+    local_completed_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
     mut event_rx: mpsc::UnboundedReceiver<GuiEvent>,
 ) {
     let local_transfers_clone = local_transfers.clone();
+    let local_completed_transfers_clone = local_completed_transfers.clone();
     let main_window_weak_transfers = main_window_weak.clone();
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let mut transfers = local_transfers_clone.lock().unwrap();
+            let mut completed_transfers = local_completed_transfers_clone.lock().unwrap();
             let mut consent_to_set = None; // (has_consent, transfer_id, peer_ip, job_name)
 
             match event {
@@ -79,6 +82,7 @@ pub fn spawn_transfers(
                     job_name,
                     total_bytes,
                     cancel_token,
+                    local_dir,
                 } => {
                     transfers.push(GuiTransfer {
                         id: transfer_id,
@@ -88,6 +92,7 @@ pub fn spawn_transfers(
                         bytes_transferred: 0,
                         start_time: std::time::Instant::now(),
                         cancel_token,
+                        local_dir,
                     });
                 }
                 GuiEvent::ChunkTransferred { transfer_id, bytes } => {
@@ -96,7 +101,11 @@ pub fn spawn_transfers(
                     }
                 }
                 GuiEvent::TransferFinished { transfer_id } => {
-                    transfers.retain(|x| x.id != transfer_id);
+                    if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
+                        let mut completed_t = transfers.remove(pos);
+                        completed_t.bytes_transferred = completed_t.total_bytes;
+                        completed_transfers.push(completed_t);
+                    }
                 }
                 GuiEvent::TransferFailed {
                     transfer_id,
@@ -149,6 +158,22 @@ pub fn spawn_transfers(
                 })
                 .collect();
 
+            let slint_completed: Vec<Transfer> = completed_transfers
+                .iter()
+                .map(|t| {
+                    let total_mb = t.total_bytes as f64 / 1_048_576.0;
+                    Transfer {
+                        id: t.id as i32,
+                        is_sender: t.is_sender,
+                        job_name: t.job_name.clone().into(),
+                        total_bytes: format!("{:.1} MB", total_mb).into(),
+                        bytes_transferred: format!("{:.1} MB", total_mb).into(),
+                        progress: 1.0,
+                        speed_eta: "Completed".into(),
+                    }
+                })
+                .collect();
+
             let _ = main_window_weak_transfers.upgrade_in_event_loop(move |ui| {
                 let current_model = ui.global::<AppData>().get_active_transfers();
 
@@ -163,6 +188,14 @@ pub fn spawn_transfers(
                     } else {
                         vec_model.set_vec(slint_transfers);
                     }
+                }
+
+                let current_completed = ui.global::<AppData>().get_completed_transfers();
+                if let Some(vec_model) = current_completed
+                    .as_any()
+                    .downcast_ref::<slint::VecModel<Transfer>>()
+                {
+                    vec_model.set_vec(slint_completed);
                 }
 
                 if let Some((has_req, id, ip, name)) = consent_to_set {
