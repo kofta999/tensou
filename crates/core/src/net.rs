@@ -351,9 +351,19 @@ mod tests {
         // Verify some files are present and match
         for i in [0, num_files / 2, num_files - 1] {
             let src = source_folder.join(format!("file_{}.bin", i));
-            let dst = dest_dir.path().join("small_files").join(format!("file_{}.bin", i));
-            assert!(dst.exists(), "Destination file {} should exist", dst.display());
-            assert!(file_diff::diff(src.to_str().unwrap(), dst.to_str().unwrap()), "File diff should match");
+            let dst = dest_dir
+                .path()
+                .join("small_files")
+                .join(format!("file_{}.bin", i));
+            assert!(
+                dst.exists(),
+                "Destination file {} should exist",
+                dst.display()
+            );
+            assert!(
+                file_diff::diff(src.to_str().unwrap(), dst.to_str().unwrap()),
+                "File diff should match"
+            );
         }
 
         server_handle.abort();

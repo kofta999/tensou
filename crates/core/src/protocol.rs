@@ -410,7 +410,8 @@ mod tests {
         std::fs::write(&state_file, bv.as_raw_slice()).unwrap();
 
         let final_file = dir.path().join("resume.final");
-        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, false)
+            .unwrap();
 
         assert!(ins.is_resumed);
         assert!(ins.state.0[0]);
@@ -456,7 +457,8 @@ mod tests {
 
         let state_file = dir.path().join("already_done.state");
 
-        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, false)
+            .unwrap();
 
         assert!(ins.is_resumed);
         assert!(ins.state.0.all());
@@ -480,7 +482,8 @@ mod tests {
 
         let state_file = dir.path().join("already_done.state");
 
-        ins.load_state_from_disk(&state_file, &final_file, true).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, true)
+            .unwrap();
 
         assert!(!ins.is_resumed);
         assert!(!ins.state.0.all());

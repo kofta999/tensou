@@ -177,11 +177,7 @@ impl DiskWriter {
             let final_path = self.staging.final_path(&self.metadata.relative_path);
             let is_small = self.metadata.size <= self.metadata.chunk_size;
 
-            let write_path = if is_small {
-                &final_path
-            } else {
-                &part_path
-            };
+            let write_path = if is_small { &final_path } else { &part_path };
 
             if self.file.is_none() {
                 if is_small {
