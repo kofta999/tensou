@@ -307,4 +307,56 @@ mod tests {
         server_handle.abort();
         Ok(())
     }
+
+    /// Measures the performance of transferring many small files.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_many_small_files_performance() -> anyhow::Result<()> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let source_dir = tempdir()?;
+        let dest_dir = tempdir()?;
+        let source_folder = source_dir.path().join("small_files");
+        std::fs::create_dir(&source_folder)?;
+
+        let num_files = 30000;
+        let file_size = 10 * 1024; // 10 KB
+        let content = vec![0xEEu8; file_size];
+        for i in 0..num_files {
+            let file_path = source_folder.join(format!("file_{}.bin", i));
+            std::fs::write(&file_path, &content)?;
+        }
+
+        let (addr, server_handle) = spawn_daemon(
+            make_config(dest_dir.path(), true),
+            Arc::new(AutoAccept),
+            Arc::new(TestObserver),
+        )
+        .await;
+
+        let start = std::time::Instant::now();
+        let client = Sender::connect(addr, &source_folder, CancellationToken::new()).await?;
+        client.process_chunks(Arc::new(TestObserver {})).await?;
+        let elapsed = start.elapsed();
+
+        let total_size = num_files * file_size;
+        let speed_mb_s = (total_size as f64 / 1024.0 / 1024.0) / elapsed.as_secs_f64();
+        eprintln!(
+            "=== PERF RESULT: Transferred {} small files ({:.2} MB total) in {:.2?} ({:.2} MB/s) ===",
+            num_files,
+            total_size as f64 / 1024.0 / 1024.0,
+            elapsed,
+            speed_mb_s
+        );
+
+        // Verify some files are present and match
+        for i in [0, num_files / 2, num_files - 1] {
+            let src = source_folder.join(format!("file_{}.bin", i));
+            let dst = dest_dir.path().join("small_files").join(format!("file_{}.bin", i));
+            assert!(dst.exists(), "Destination file {} should exist", dst.display());
+            assert!(file_diff::diff(src.to_str().unwrap(), dst.to_str().unwrap()), "File diff should match");
+        }
+
+        server_handle.abort();
+        Ok(())
+    }
 }

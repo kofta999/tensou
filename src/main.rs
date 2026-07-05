@@ -8,6 +8,8 @@ async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
         .filter_module("tracing::span", log::LevelFilter::Off)
         .filter_module("winit", log::LevelFilter::Off)
+        .filter_module("quinn", log::LevelFilter::Off)
+        .filter_module("mdns_sd", log::LevelFilter::Off)
         .init();
 
     rustls::crypto::ring::default_provider()

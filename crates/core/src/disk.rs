@@ -159,6 +159,9 @@ impl DiskWriter {
     }
 
     async fn save_state(&self) -> anyhow::Result<()> {
+        if self.metadata.size <= self.metadata.chunk_size {
+            return Ok(());
+        }
         tokio::fs::write(
             &self.staging.state_path(&self.metadata.relative_path),
             self.state.0.as_raw_slice(),
@@ -171,14 +174,31 @@ impl DiskWriter {
         if packet.header.hash == ChunkHeader::hash_chunk(&packet.bytes) {
             let offset = packet.header.index * self.metadata.chunk_size;
             let part_path = self.staging.part_path(&self.metadata.relative_path);
+            let final_path = self.staging.final_path(&self.metadata.relative_path);
+            let is_small = self.metadata.size <= self.metadata.chunk_size;
+
+            let write_path = if is_small {
+                &final_path
+            } else {
+                &part_path
+            };
 
             if self.file.is_none() {
-                self.staging
-                    .create_file_staging_dir(&self.metadata.relative_path)?;
+                if is_small {
+                    self.staging
+                        .create_file_destination_dir(&self.metadata.relative_path)?;
+                } else {
+                    self.staging
+                        .create_file_staging_dir(&self.metadata.relative_path)?;
+                }
             }
 
             if !self.is_resumed {
-                Self::allocate_sparse_file(&part_path, self.metadata.size).await?;
+                if is_small {
+                    tokio::fs::File::create(write_path).await?;
+                } else {
+                    Self::allocate_sparse_file(write_path, self.metadata.size).await?;
+                }
                 self.is_resumed = true;
             }
 
@@ -186,7 +206,7 @@ impl DiskWriter {
                 let file = tokio::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .open(&part_path)
+                    .open(write_path)
                     .await?;
                 self.file = Some(file);
             }
@@ -209,7 +229,6 @@ impl DiskWriter {
     }
 
     fn commit(&mut self) -> anyhow::Result<()> {
-        // Drop the open file handle so it is closed and we can rename/remove it
         self.file = None;
 
         let state_path = self.staging.state_path(&self.metadata.relative_path);
@@ -217,12 +236,15 @@ impl DiskWriter {
             std::fs::remove_file(state_path)?;
         }
 
-        self.staging
-            .create_file_destination_dir(&self.metadata.relative_path)?;
+        let is_small = self.metadata.size <= self.metadata.chunk_size;
+        if !is_small {
+            self.staging
+                .create_file_destination_dir(&self.metadata.relative_path)?;
 
-        let part_path = self.staging.part_path(&self.metadata.relative_path);
-        let final_path = self.staging.final_path(&self.metadata.relative_path);
-        std::fs::rename(part_path, final_path)?;
+            let part_path = self.staging.part_path(&self.metadata.relative_path);
+            let final_path = self.staging.final_path(&self.metadata.relative_path);
+            std::fs::rename(part_path, final_path)?;
+        }
 
         Ok(())
     }
