@@ -142,6 +142,7 @@ impl JobInstruction {
         &mut self,
         state_file_path: &Path,
         final_file_path: &Path,
+        overwrite: bool,
     ) -> anyhow::Result<()> {
         // Partial Transfer -> State file exists
         if state_file_path.exists() {
@@ -152,8 +153,9 @@ impl JobInstruction {
             self.is_resumed = true;
             self.state = State(bitvec);
             self.remaining_bytes = self.get_remaining_size();
-        // File Already Transferred -> Assume state file is all 1s
-        } else if let Ok(metadata) = fs::metadata(final_file_path)
+        // File Already Transferred -> Assume state file is all 1s (only when overwrite is false)
+        } else if !overwrite
+            && let Ok(metadata) = fs::metadata(final_file_path)
             && metadata.len() == self.metadata.size
         {
             self.is_resumed = true;
@@ -184,6 +186,7 @@ impl ManifestManager {
     pub fn parse(
         manifest: Manifest,
         staging: Arc<TransferStaging>,
+        overwrite: bool,
     ) -> anyhow::Result<Vec<JobInstruction>> {
         let mut instructions = Vec::new();
 
@@ -195,7 +198,14 @@ impl ManifestManager {
             let mut instruction = JobInstruction::new(metadata);
             let state_path = &staging.state_path(&instruction.metadata.relative_path);
             let final_path = &staging.final_path(&instruction.metadata.relative_path);
-            instruction.load_state_from_disk(state_path, final_path)?;
+            instruction.load_state_from_disk(state_path, final_path, overwrite)?;
+
+            // If the file is already complete (size 0) and does not exist at final destination,
+            // create the parent folder structure and the empty file on the blocking thread.
+            if instruction.state.0.all() && (overwrite || !final_path.exists()) {
+                staging.create_file_destination_dir(&instruction.metadata.relative_path)?;
+                std::fs::File::create(final_path)?;
+            }
 
             instructions.push(instruction);
         }
@@ -400,7 +410,7 @@ mod tests {
         std::fs::write(&state_file, bv.as_raw_slice()).unwrap();
 
         let final_file = dir.path().join("resume.final");
-        ins.load_state_from_disk(&state_file, &final_file).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
 
         assert!(ins.is_resumed);
         assert!(ins.state.0[0]);
@@ -421,6 +431,7 @@ mod tests {
         ins.load_state_from_disk(
             std::path::Path::new("/tmp/does_not_exist_xyz.state"),
             std::path::Path::new("/tmp/does_not_exist_xyz.final"),
+            false,
         )
         .unwrap();
 
@@ -445,11 +456,35 @@ mod tests {
 
         let state_file = dir.path().join("already_done.state");
 
-        ins.load_state_from_disk(&state_file, &final_file).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
 
         assert!(ins.is_resumed);
         assert!(ins.state.0.all());
         assert_eq!(ins.remaining_bytes, 0);
+    }
+
+    /// Verifies that load_state_from_disk does NOT mark the instruction as completed if the final file exists but overwrite is true.
+    #[test]
+    fn job_instruction_load_state_completed_file_overwrite() {
+        let dir = tempdir().unwrap();
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "already_done.txt".into(),
+            size: 12,
+            chunk_size: 4,
+        };
+        let mut ins = JobInstruction::new(m);
+
+        let final_file = dir.path().join("already_done.txt");
+        std::fs::write(&final_file, b"hello world\n").unwrap();
+
+        let state_file = dir.path().join("already_done.state");
+
+        ins.load_state_from_disk(&state_file, &final_file, true).unwrap();
+
+        assert!(!ins.is_resumed);
+        assert!(!ins.state.0.all());
+        assert_eq!(ins.remaining_bytes, 12);
     }
 
     /// Verifies that ManifestManager::build correctly constructs a manifest for a single file.
@@ -512,7 +547,7 @@ mod tests {
             }],
         };
 
-        let result = ManifestManager::parse(manifest, staging);
+        let result = ManifestManager::parse(manifest, staging, false);
         assert!(result.is_err(), "Path traversal should be rejected");
     }
 }

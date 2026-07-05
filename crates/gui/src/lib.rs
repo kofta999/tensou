@@ -22,7 +22,6 @@ pub use views::run_gui;
 pub fn run() -> anyhow::Result<()> {
     println!("Launching Tensou GUI...");
     let config = Config::load_or_create();
-    let config_clone = config.clone();
     let device_uuid = config.device_uuid.clone();
 
     // For detecting devices
@@ -40,11 +39,18 @@ pub fn run() -> anyhow::Result<()> {
 
     let daemon_event_tx = event_tx.clone();
     let daemon_consent_registry = consent_registry.clone();
+    let port = config.listen_port;
+    let config_mutex = Arc::new(Mutex::new(config));
+    let config_clone = config_mutex.clone();
 
     tokio::spawn(async move {
-        let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), config.listen_port);
+        let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
-        let target_dir = config_clone.target_dir.clone();
+        let target_dir = {
+            let config = config_clone.lock().unwrap();
+            config.target_dir.clone()
+        };
+
         if let Ok(daemon) = ReceiverDaemon::new(bind_addr, config_clone) {
             let cancel_token = CancellationToken::new();
 
@@ -64,7 +70,13 @@ pub fn run() -> anyhow::Result<()> {
         }
     });
 
-    crate::run_gui(devices_rx, event_tx, event_rx, consent_registry, config)?;
+    crate::run_gui(
+        devices_rx,
+        event_tx,
+        event_rx,
+        consent_registry,
+        config_mutex,
+    )?;
 
     Ok(())
 }

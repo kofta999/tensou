@@ -3,6 +3,7 @@ use crate::{
     state::{ConsentRegistry, GuiEvent, GuiTransfer},
 };
 use std::sync::Arc;
+use std::sync::Mutex;
 use tensou_core::config::Config;
 use tensou_core::discovery::DiscoveryEvent;
 use tokio::sync::mpsc;
@@ -14,7 +15,7 @@ pub fn run_gui(
     event_tx: mpsc::UnboundedSender<GuiEvent>,
     event_rx: mpsc::UnboundedReceiver<GuiEvent>,
     consent_registry: Arc<ConsentRegistry>,
-    config: Config,
+    config: Arc<Mutex<Config>>,
 ) -> anyhow::Result<()> {
     let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
@@ -26,10 +27,8 @@ pub fn run_gui(
     let main_window = MainWindow::new()?;
     let main_window_weak = main_window.as_weak();
 
-    let config_state = Arc::new(std::sync::Mutex::new(config));
-
     {
-        let cfg = config_state.lock().unwrap();
+        let cfg = config.lock().unwrap();
         let app_data = main_window.global::<AppData>();
         app_data.set_device_uuid(cfg.device_uuid.clone().into());
         app_data.set_display_name(cfg.display_name.clone().into());
@@ -57,7 +56,7 @@ pub fn run_gui(
         &main_window,
         event_tx,
         consent_registry,
-        config_state,
+        config,
         local_transfers.clone(),
         local_completed_transfers.clone(),
     );

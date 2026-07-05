@@ -12,22 +12,30 @@ use crate::{
 use mdns_sd::ServiceDaemon;
 use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 // Server listener
 pub struct ReceiverDaemon {
     pub(super) endpoint: quinn::Endpoint,
-    pub(super) config: Config,
+    pub(super) config: Arc<Mutex<Config>>,
     pub(super) _discovery_daemon: ServiceDaemon,
 }
 
 impl ReceiverDaemon {
-    pub fn new(bind_addr: SocketAddr, config: Config) -> anyhow::Result<Self> {
+    pub fn new(bind_addr: SocketAddr, config: Arc<Mutex<Config>>) -> anyhow::Result<Self> {
         let server_config = Self::configure_server()?;
         let endpoint = Endpoint::server(server_config, bind_addr)?;
-        let _discovery_daemon = discovery::register_service(&config)?;
+        let _discovery_daemon = {
+            let config = config.lock().unwrap();
+            discovery::register_service(&config)?
+        };
 
         Ok(Self {
             endpoint,
@@ -60,7 +68,10 @@ impl ReceiverDaemon {
             incoming = self.endpoint.accept() => {
                 let Some(incoming) = incoming else {break};
 
-                let target_dir_clone = self.config.target_dir.clone();
+                let target_dir_clone = {
+                    let config = self.config.lock().unwrap();
+                    config.target_dir.clone()
+                };
                 let observer_clone = observer.clone();
                 let transfer_id = rand::random::<u32>();
                 let consent_clone = consent.clone();
@@ -97,13 +108,18 @@ impl ReceiverDaemon {
                                 .await;
 
                              if is_accepted {
+                                let overwrite = {
+                                    let config = config_clone.lock().unwrap();
+                                    config.overwrite_dest
+                                };
+
                                 let receiver = match pending
                                     .accept(
                                         &target_dir_clone,
                                         observer_clone.clone(),
                                         transfer_id,
                                         conn_cancel_token.clone(),
-                                        config_clone.overwrite_dest
+                                        overwrite
                                     )
                                     .await
                                 {
@@ -255,7 +271,7 @@ impl PendingTransfer {
 
         let staging_clone = staging.clone();
         let instructions = tokio::task::spawn_blocking(move || {
-            ManifestManager::parse(self.manifest, staging_clone.clone())
+            ManifestManager::parse(self.manifest, staging_clone.clone(), overwrite)
         })
         .await??;
 

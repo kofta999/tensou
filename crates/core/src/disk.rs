@@ -112,7 +112,9 @@ impl DiskWriter {
         loop {
             tokio::select! {
                 _ = self.cancel_token.cancelled() =>  {
-                    self.save_state().await?;
+                    if !self.is_complete() && self.is_resumed {
+                        self.save_state().await?;
+                    }
                     return Ok(())
                 }
 

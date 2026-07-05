@@ -12,6 +12,7 @@ mod tests {
     use async_trait::async_trait;
     use std::net::SocketAddr;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -40,16 +41,16 @@ mod tests {
     struct TestObserver;
     impl TransferObserver for TestObserver {}
 
-    fn make_config(dest: &std::path::Path, overwrite: bool) -> Config {
-        Config {
+    fn make_config(dest: &std::path::Path, overwrite: bool) -> Arc<Mutex<Config>> {
+        Arc::new(Mutex::new(Config {
             target_dir: dest.to_path_buf(),
             overwrite_dest: overwrite,
             ..Default::default()
-        }
+        }))
     }
 
     async fn spawn_daemon(
-        config: Config,
+        config: Arc<Mutex<Config>>,
         consent: Arc<dyn TransferConsentHandler>,
         observer: Arc<dyn TransferObserver>,
     ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
