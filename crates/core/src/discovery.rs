@@ -43,6 +43,7 @@ pub fn register_service(config: &Config) -> anyhow::Result<ServiceDaemon> {
     )?
     .enable_addr_auto();
 
+    log::info!("Registering mDNS service: {} ({}.local.) on port {}", instance_name, hostname.to_lowercase(), config.listen_port);
     daemon.register(service_info)?;
 
     Ok(daemon)
@@ -52,6 +53,7 @@ pub async fn scan_for_receivers(
     tx: mpsc::Sender<DiscoveryEvent>,
     _my_uuid: &str,
 ) -> anyhow::Result<()> {
+    log::info!("Starting mDNS browser scan for receivers...");
     let daemon = ServiceDaemon::new()?;
     let receiver = daemon.browse(SERVICE_TYPE)?;
 
@@ -62,8 +64,8 @@ pub async fn scan_for_receivers(
 
     loop {
         tokio::select! {
-            // Remove offline devices every 3s
             _ = verify_interval.tick() => {
+                log::debug!("Verifying active mDNS devices...");
                 for fullname in discovered_devices.keys() {
                     let _ = daemon.verify(fullname.clone(), Duration::from_secs(3));
                 }
@@ -98,6 +100,7 @@ pub async fn scan_for_receivers(
                                 };
 
                                 if is_valid {
+                                    log::info!("Resolved target receiver: name={}, uuid={}, addr={}", display_name, device_uuid, socket_addr);
                                     discovered_devices.insert(fullname.clone(), socket_addr);
 
                                     let device = DiscoveredDevice {
@@ -116,6 +119,7 @@ pub async fn scan_for_receivers(
                     }
 
                     ServiceEvent::ServiceRemoved(_, fullname) => {
+                        log::info!("Receiver service removed from mDNS: {}", fullname);
                         if discovered_devices.remove(&fullname).is_some() && tx.send(DiscoveryEvent::DeviceLost(fullname)).await.is_err() {
                             break;
                         }

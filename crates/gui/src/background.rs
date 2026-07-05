@@ -22,7 +22,7 @@ pub fn spawn_discovery(
             let mut devices = local_devices.lock().unwrap();
             match event {
                 DiscoveryEvent::DeviceFound(discovered_device) => {
-                    println!(
+                    log::info!(
                         "Discovered device: name={}, uuid={}, os={}",
                         discovered_device.display_name,
                         discovered_device.device_uuid,

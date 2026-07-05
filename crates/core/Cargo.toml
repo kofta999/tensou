@@ -17,6 +17,7 @@ rustls = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 tokio = { workspace = true }
+log = { workspace = true }
 walkdir = "2.5.0"
 rand = { workspace = true }
 async-trait = { workspace = true }

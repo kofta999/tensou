@@ -44,7 +44,7 @@ pub fn setup(
                     send_file_background(event_tx.clone(), target_addr, path);
                 }
             } else {
-                println!("Invalid target IP address");
+                log::warn!("Invalid target IP address");
             }
         }
     });
@@ -61,7 +61,7 @@ pub fn setup(
                     send_file_background(event_tx.clone(), target_addr, path);
                 }
             } else {
-                println!("Invalid target IP address");
+                log::warn!("Invalid target IP address");
             }
         }
     });
@@ -156,7 +156,7 @@ pub fn setup(
         .on_cancel_transfer({
             let local_transfers = local_transfers.clone();
             move |transfer_id| {
-                println!("Cancel clicked for transfer: {}", transfer_id);
+                log::info!("Cancel clicked for transfer: {}", transfer_id);
                 let transfers = local_transfers.lock().unwrap();
                 if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
                     transfer.cancel_token.cancel();
@@ -170,9 +170,8 @@ pub fn setup(
         .on_open_transfer_folder(move |transfer_id| {
             let completed = local_completed_transfers.lock().unwrap();
             if let Some(t) = completed.iter().find(|x| x.id == transfer_id as u32) {
-                println!("Opening folder for completed transfer: {}", t.local_dir.display());
-                let e = open::that(&t.local_dir);
-                dbg!(e);
+                log::info!("Opening folder for completed transfer: {}", t.local_dir.display());
+                let _ = open::that(&t.local_dir);
             }
         });
 }

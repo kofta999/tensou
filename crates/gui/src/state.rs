@@ -157,32 +157,32 @@ impl ConsentRegistry {
     }
 
     pub fn accept(&self, transfer_id: u32) {
-        println!(
-            "[DEBUG] ConsentRegistry::accept: trying to accept transfer_id={}",
+        log::debug!(
+            "ConsentRegistry::accept: trying to accept transfer_id={}",
             transfer_id
         );
         let mut pending = self.pending.lock().unwrap();
-        println!(
-            "[DEBUG] ConsentRegistry::accept: pending keys: {:?}",
+        log::debug!(
+            "ConsentRegistry::accept: pending keys: {:?}",
             pending.keys().collect::<Vec<_>>()
         );
         if let Some(tx) = pending.remove(&transfer_id) {
-            println!(
-                "[DEBUG] ConsentRegistry::accept: found sender for transfer_id={}",
+            log::debug!(
+                "ConsentRegistry::accept: found sender for transfer_id={}",
                 transfer_id
             );
             let _ = tx.send(true);
         } else {
-            println!(
-                "[DEBUG] ConsentRegistry::accept: SENDER NOT FOUND for transfer_id={}",
+            log::warn!(
+                "ConsentRegistry::accept: SENDER NOT FOUND for transfer_id={}",
                 transfer_id
             );
         }
     }
 
     pub fn reject(&self, transfer_id: u32) {
-        println!(
-            "[DEBUG] ConsentRegistry::reject: trying to reject transfer_id={}",
+        log::debug!(
+            "ConsentRegistry::reject: trying to reject transfer_id={}",
             transfer_id
         );
         let mut pending = self.pending.lock().unwrap();
@@ -209,8 +209,8 @@ impl TransferConsentHandler for GuiConsentHandler {
         let transfer_id = rand::random::<u32>();
         let (tx, rx) = oneshot::channel();
 
-        println!(
-            "[DEBUG] GuiConsentHandler::request_consent: generated transfer_id={}",
+        log::debug!(
+            "GuiConsentHandler::request_consent: generated transfer_id={}",
             transfer_id
         );
 

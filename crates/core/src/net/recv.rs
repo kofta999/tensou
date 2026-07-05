@@ -73,11 +73,11 @@ impl ReceiverDaemon {
                     let connection = match timeout(Duration::from_secs(5), incoming).await {
                         Ok(Ok(conn)) => conn,
                         Ok(Err(e)) => {
-                            eprintln!("Quinn connection establishment failed: {e}");
+                            log::error!("Quinn connection establishment failed: {e}");
                             return anyhow::Ok(());
                         }
                         Err(_) => {
-                            eprintln!("Connection handshake timed out.");
+                            log::warn!("Connection handshake timed out.");
                             return anyhow::Ok(());
                         }
                     };
@@ -143,7 +143,7 @@ impl ReceiverDaemon {
                                                 observer_clone.on_transfer_complete(transfer_id);
                                             }
                                             Err(e) => {
-                                                // Tell the UI about the error instead of silently aborting!
+                                                log::error!("Transfer chunk processing error: {e}");
                                                 observer_clone.on_transfer_failed(transfer_id, &e.to_string());
                                             }
                                         }
@@ -151,15 +151,15 @@ impl ReceiverDaemon {
                                 }
 
                             } else {
-                                println!("Transfer from {} was rejected.", peer);
+                                log::info!("Transfer from {} was rejected.", peer);
                                 pending.reject().await?;
                             }
                         }
                         Ok(Err(e)) => {
-                            eprintln!("Handshake manifest read failed! {e}");
+                            log::error!("Handshake manifest read failed! {e}");
                         }
                         Err(_) => {
-                            eprintln!("Timed out waiting for manifest from {peer}");
+                            log::warn!("Timed out waiting for manifest from {peer}");
                         }
                     };
 
@@ -168,7 +168,7 @@ impl ReceiverDaemon {
             }}
         }
 
-        println!("Waiting for active transfers to safely flush to disk...");
+        log::info!("Waiting for active transfers to safely flush to disk...");
         while active_transfers.join_next().await.is_some() {}
     }
 
@@ -198,6 +198,7 @@ pub(super) struct PendingTransfer {
 
 impl PendingTransfer {
     pub async fn read_manifest(connection: quinn::Connection) -> anyhow::Result<Self> {
+        log::debug!("Receiving handshake request from {}...", connection.remote_address());
         let (send_stream, mut recv_stream) = connection.accept_bi().await?;
 
         let buf = recv_stream.read_to_end(MAX_METADATA_SIZE as usize).await?;
@@ -374,13 +375,13 @@ impl Receiver {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     if !cancel_token.is_cancelled() {
-                        eprintln!("Chunk error: {e:?}");
+                        log::error!("Chunk error: {e:?}");
                         has_error = true;
                     }
                 }
                 Err(e) => {
                     if !cancel_token.is_cancelled() {
-                        eprintln!("Task panic: {e:?}");
+                        log::error!("Task panic: {e:?}");
                         has_error = true;
                     }
                 }
@@ -402,13 +403,13 @@ impl Receiver {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     if !cancel_token.is_cancelled() {
-                        eprintln!("Writer failed: {e:?}");
+                        log::error!("Writer failed: {e:?}");
                         has_error = true;
                     }
                 }
                 Err(e) => {
                     if !cancel_token.is_cancelled() {
-                        eprintln!("Writer task panicked: {e:?}");
+                        log::error!("Writer task panicked: {e:?}");
                         has_error = true;
                     }
                 }

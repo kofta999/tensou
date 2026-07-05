@@ -20,7 +20,7 @@ pub fn run_gui(
         .backend_name("winit".into())
         .renderer_name("software".into());
     if let Err(err) = selector.select() {
-        eprintln!("Failed to select backend: {:?}", err);
+        log::error!("Failed to select backend: {:?}", err);
     }
 
     let main_window = MainWindow::new()?;
