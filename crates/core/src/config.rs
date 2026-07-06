@@ -24,11 +24,13 @@ pub struct Config {
 
     /// The port to bind for incoming QUIC connections (default: 6967).
     pub listen_port: u16,
-    // /// Maximum concurrent QUIC streams allowed per transfer session (default: 8).
-    // pub max_concurrent_streams: u32,
 
-    // /// Size of chunks in bytes (default: 4MB).
-    // pub chunk_size: u32,
+    /// Whether to auto-accept incoming requests without consent
+    pub auto_accept: bool, // /// Maximum concurrent QUIC streams allowed per transfer session (default: 8).
+                           // pub max_concurrent_streams: u32,
+
+                           // /// Size of chunks in bytes (default: 4MB).
+                           // pub chunk_size: u32,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             target_dir,
             overwrite_dest: false,
             listen_port: SERVER_PORT,
+            auto_accept: false,
         }
     }
 }

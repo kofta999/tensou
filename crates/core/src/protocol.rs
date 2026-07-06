@@ -440,7 +440,8 @@ mod tests {
         let state_file = dir.path().join("empty.state");
         std::fs::write(&state_file, &[]).unwrap();
         let final_file = dir.path().join("empty.final");
-        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, false)
+            .unwrap();
         assert!(ins.is_resumed);
         assert_eq!(ins.state.0.len(), 4);
         assert!(ins.state.0.not_any());
@@ -450,7 +451,8 @@ mod tests {
         let state_file = dir.path().join("truncated.state");
         std::fs::write(&state_file, &[0b0000_0001]).unwrap(); // Lsb0 order: bit 0 is true, others false
         let final_file = dir.path().join("truncated.final");
-        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
+        ins.load_state_from_disk(&state_file, &final_file, false)
+            .unwrap();
         assert!(ins.is_resumed);
         assert_eq!(ins.state.0.len(), 4);
         assert!(ins.state.0[0]);
