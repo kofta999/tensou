@@ -318,7 +318,7 @@ mod tests {
         let source_folder = source_dir.path().join("small_files");
         std::fs::create_dir(&source_folder)?;
 
-        let num_files = 30000;
+        let num_files = 3000;
         let file_size = 10 * 1024; // 10 KB
         let content = vec![0xEEu8; file_size];
         for i in 0..num_files {

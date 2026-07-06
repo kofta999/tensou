@@ -148,7 +148,12 @@ impl JobInstruction {
         if state_file_path.exists() {
             let state_bytes = fs::read(state_file_path)?;
             let mut bitvec: BitVec<u8, Lsb0> = BitVec::from_vec(state_bytes);
-            bitvec.truncate(self.state.0.len());
+            let expected_len = self.state.0.len();
+            if bitvec.len() < expected_len {
+                bitvec.resize(expected_len, false);
+            } else {
+                bitvec.truncate(expected_len);
+            }
 
             self.is_resumed = true;
             self.state = State(bitvec);
@@ -417,6 +422,39 @@ mod tests {
         assert!(ins.state.0[0]);
         assert!(!ins.state.0[1]);
         assert_eq!(ins.remaining_bytes, 4);
+    }
+
+    /// Verifies that load_state_from_disk handles empty/truncated state files without panicking.
+    #[test]
+    fn job_instruction_load_state_empty_or_truncated() {
+        let dir = tempdir().unwrap();
+        let m = Metadata {
+            file_id: 0,
+            relative_path: "".into(),
+            size: 16,
+            chunk_size: 4,
+        }; // Requires 4 chunks
+
+        // Test 1: Empty state file (0 bytes)
+        let mut ins = JobInstruction::new(m.clone());
+        let state_file = dir.path().join("empty.state");
+        std::fs::write(&state_file, &[]).unwrap();
+        let final_file = dir.path().join("empty.final");
+        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
+        assert!(ins.is_resumed);
+        assert_eq!(ins.state.0.len(), 4);
+        assert!(ins.state.0.not_any());
+
+        // Test 2: Truncated state file (contains only 1 byte, but we expect 4 chunks)
+        let mut ins = JobInstruction::new(m);
+        let state_file = dir.path().join("truncated.state");
+        std::fs::write(&state_file, &[0b0000_0001]).unwrap(); // Lsb0 order: bit 0 is true, others false
+        let final_file = dir.path().join("truncated.final");
+        ins.load_state_from_disk(&state_file, &final_file, false).unwrap();
+        assert!(ins.is_resumed);
+        assert_eq!(ins.state.0.len(), 4);
+        assert!(ins.state.0[0]);
+        assert!(!ins.state.0[1]);
     }
 
     /// Verifies that load_state_from_disk behaves as a no-op if the state file does not exist.
