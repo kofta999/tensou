@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let default_level = if cfg!(debug_assertions) {
