@@ -1,20 +1,25 @@
-import { Device, Transfer } from "types.slint";
+import { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest } from "types.slint";
 import { TabButton, ZenButton } from "components.slint";
 import { SendView } from "send-view.slint";
 import { TransfersView } from "transfers-view.slint";
 import { SettingsView } from "settings-view.slint";
-import { Theme, AppData, Logic } from "globals.slint";
+import { Theme, AppData, Logic, ToastData } from "globals.slint";
+import { Dialog } from "slintcn/components/dialog.slint";
 
-export { Device, Transfer, AppData, Logic }
+export { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest, AppData, Logic, ToastData }
 
 export component MainWindow inherits Window {
     title: "Tensou";
-    width: 480px;
-    height: 640px;
+    min-width: 400px;
+    min-height: 500px;
+    preferred-width: 480px;
+    preferred-height: 640px;
     background: Theme.background;
+    default-font-family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+    default-font-size: Theme.font-body;
 
     // Active Screen properties
-    in-out property <int> current_tab: 0; // 0 = Send, 1 = Transfers, 2 = Settings
+    in-out property <AppTab> current_tab <=> AppData.current_tab;
 
     VerticalLayout {
         padding: 24px;
@@ -54,32 +59,32 @@ export component MainWindow inherits Window {
         // Tab Bar
         HorizontalLayout {
             height: 44px;
-            spacing: 12px;
+            spacing: 10px;
 
             TabButton {
-                text: "Send (Devices)";
-                active: current_tab == 0;
+                text: "Send";
+                active: current_tab == AppTab.send;
                 clicked => {
-                    current_tab = 0;
-                    Logic.change_tab(0);
+                    current_tab = AppTab.send;
+                    Logic.change_tab(AppTab.send);
                 }
             }
 
             TabButton {
                 text: AppData.active_transfers.length > 0 ? "Transfers (" + AppData.active_transfers.length + ")" : "Transfers";
-                active: current_tab == 1;
+                active: current_tab == AppTab.transfers;
                 clicked => {
-                    current_tab = 1;
-                    Logic.change_tab(1);
+                    current_tab = AppTab.transfers;
+                    Logic.change_tab(AppTab.transfers);
                 }
             }
 
             TabButton {
                 text: "Settings";
-                active: current_tab == 2;
+                active: current_tab == AppTab.settings;
                 clicked => {
-                    current_tab = 2;
-                    Logic.change_tab(2);
+                    current_tab = AppTab.settings;
+                    Logic.change_tab(AppTab.settings);
                 }
             }
         }
@@ -91,84 +96,281 @@ export component MainWindow inherits Window {
             border-width: 0px;
             clip: true;
 
-            if current_tab == 0: SendView { }
-            if current_tab == 1: TransfersView { }
-            if current_tab == 2: SettingsView { }
+            if current_tab == AppTab.send: SendView { }
+            if current_tab == AppTab.transfers: TransfersView { }
+            if current_tab == AppTab.settings: SettingsView { }
         }
     }
 
-    // Consent Modal popup overlay with Theme styling
-    if AppData.has_consent_request: Rectangle {
-        background: rgba(26, 27, 38, 0.85);
-        width: 100%;
-        height: 100%;
+    // Consent Request Dialog
+    Dialog {
+        width: parent.width;
+        height: parent.height;
+        open <=> AppData.has_consent_request;
+        title: "Incoming Transfer";
+        description: "";
+        show-close-button: false;
+        dismissed => {
+            Logic.consent_response(AppData.consent_request.transfer_id, false);
+            AppData.has_consent_request = false;
+        }
 
-        Rectangle {
-            width: 320px;
-            height: 240px;
-            background: Theme.surface;
-            border-radius: 12px;
-            border-width: 2px;
-            border-color: Theme.primary;
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+        // Nested Content
+        VerticalLayout {
+            spacing: 20px;
 
-            VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-                alignment: center;
+            // Sender Info Box
+            Rectangle {
+                background: Theme.background;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Theme.surface-hover;
 
-                Text {
-                    text: "Incoming Transfer Request";
-                    font-size: 18px;
-                    font-weight: 800;
-                    color: Theme.primary;
-                    horizontal-alignment: center;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        Image {
+                            source: AppData.consent_request.device_os == "linux" ? @image-url("icons/linux.svg") : (AppData.consent_request.device_os == "windows" ? @image-url("icons/windows.svg") : (AppData.consent_request.device_os == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/network.svg")));
+                            width: 18px;
+                            height: 18px;
+                            colorize: Theme.secondary;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        Text {
+                            text: AppData.consent_request.device_name != "" ? AppData.consent_request.device_name : "Unknown Device";
+                            font-size: 14px;
+                            font-weight: 700;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: "IP: " + AppData.consent_request.peer_ip;
+                        font-size: 11px;
+                        font-family: "monospace";
+                        color: Theme.text-secondary;
+                    }
+                }
+            }
+
+            // File/Payload Section
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    background: Theme.surface-hover;
+                    border-radius: 6px;
+                    y: (parent.height - self.height) / 2;
+
+                    Image {
+                        source: @image-url("icons/file.svg");
+                        width: 18px;
+                        height: 18px;
+                        colorize: Theme.primary;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
                 }
 
-                Text {
-                    text: AppData.consent_peer_ip + " wants to send you:";
-                    color: Theme.text-secondary;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                }
-
-                Text {
-                    text: AppData.consent_job_name;
-                    font-size: 16px;
-                    font-weight: 700;
-                    color: #ffffff;
-                    horizontal-alignment: center;
-                    wrap: word-wrap;
-                    overflow: elide;
-                    max-height: 48px;
-                }
-
-                HorizontalLayout {
-                    spacing: 16px;
+                VerticalLayout {
                     alignment: center;
+                    spacing: 2px;
 
-                    ZenButton {
-                        text: "Accept";
-                        primary: true;
-                        width: 110px;
-                        clicked => {
-                            Logic.consent_response(AppData.consent_transfer_id, true);
-                            AppData.has_consent_request = false;
-                        }
+                    Text {
+                        text: "Wants to send you:";
+                        font-size: 11px;
+                        color: Theme.text-secondary;
                     }
 
-                    ZenButton {
-                        text: "Decline";
-                        primary: false;
-                        width: 110px;
-                        clicked => {
-                            Logic.consent_response(AppData.consent_transfer_id, false);
-                            AppData.has_consent_request = false;
-                        }
+                    Text {
+                        text: AppData.consent_request.job_name;
+                        font-size: 15px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                        width: 250px;
                     }
                 }
+            }
+
+            // Action Buttons Footer
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                ZenButton {
+                    text: "Decline";
+                    primary: false;
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        Logic.consent_response(AppData.consent_request.transfer_id, false);
+                        AppData.has_consent_request = false;
+                    }
+                }
+
+                ZenButton {
+                    text: "Accept";
+                    primary: true;
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        Logic.consent_response(AppData.consent_request.transfer_id, true);
+                        AppData.has_consent_request = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Cancel Confirmation Dialog
+    Dialog {
+        width: parent.width;
+        height: parent.height;
+        open <=> AppData.has_cancel_confirmation;
+        title: "Cancel Transfer?";
+        description: "";
+        show-close-button: false;
+        dismissed => {
+            AppData.has_cancel_confirmation = false;
+        }
+
+        // Nested Content
+        VerticalLayout {
+            spacing: 20px;
+
+            // File Info Section
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    background: Theme.surface-hover;
+                    border-radius: 6px;
+                    y: (parent.height - self.height) / 2;
+
+                    Image {
+                        source: @image-url("icons/file.svg");
+                        width: 18px;
+                        height: 18px;
+                        colorize: Theme.primary;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: "Are you sure you want to cancel:";
+                        font-size: 11px;
+                        color: Theme.text-secondary;
+                    }
+
+                    Text {
+                        text: AppData.cancel_request.job_name;
+                        font-size: 15px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                        width: 250px;
+                    }
+                }
+            }
+
+            // Action Buttons Footer
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                ZenButton {
+                    text: "No, Keep It";
+                    primary: false;
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        AppData.has_cancel_confirmation = false;
+                    }
+                }
+
+                ZenButton {
+                    text: "Yes, Cancel";
+                    primary: true;
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        Logic.cancel_transfer(AppData.cancel_request.transfer_id);
+                        AppData.has_cancel_confirmation = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Toast Notification Overlay
+    Rectangle {
+        background: ToastData.toast_type == "success" ? Theme.success : (ToastData.toast_type == "error" ? Theme.error : Theme.info);
+        border-radius: 8px;
+        height: layout.preferred-height;
+        width: 320px;
+        x: (parent.width - self.width) / 2;
+        y: ToastData.show ? 20px : -100px; // Slide down animation
+        opacity: ToastData.show ? 1.0 : 0.0;
+
+        drop-shadow-color: rgba(0, 0, 0, 0.4);
+        drop-shadow-blur: 16px;
+
+        animate y {
+            duration: 300ms;
+            easing: ease-out-back;
+        }
+        animate opacity { duration: 250ms; }
+
+        layout := HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            spacing: 10px;
+            alignment: start;
+
+            Image {
+                source: ToastData.toast_type == "success" ? @image-url("icons/check.svg") : @image-url("icons/info.svg");
+                width: 18px;
+                height: 18px;
+                colorize: Theme.text-dark;
+                y: (parent.height - self.height) / 2;
+            }
+
+            Text {
+                text: ToastData.message;
+                color: Theme.text-dark;
+                font-size: 13px;
+                font-weight: 800;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+
+        // Hide on click
+        TouchArea {
+            clicked => {
+                ToastData.show = false;
             }
         }
     }

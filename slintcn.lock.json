@@ -1,0 +1,69 @@
+{
+  "theme": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/theme/palette.slint": "56f076b9e9d7c4968d0cc61ff114d9d4fb8f6ac2c9c569b01cb2252c65674e70",
+      "crates/gui/ui/slintcn/theme/tokens.slint": "822463bfb9289211fe1a72f2ae3c86d8ee661171d2c808efb9a5f1fa932a0628"
+    }
+  },
+  "focus-ring": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/focus-ring.slint": "e1d33962577d7f1b042af3e113d26a06cd917f046ae4a5a8eb366f0c1a30a12c"
+    }
+  },
+  "input": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/input.slint": "4c92746253d0cc717b3113b4646d8d75fc6932ac3ab7b24a3516d7e0f6ecf84c"
+    }
+  },
+  "textarea": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/textarea.slint": "b7082ea4e2090f3b782c6ce40ac4696ec448aaf07c512b9dd89bb393d8bf269f"
+    }
+  },
+  "popup-helpers": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/popup-helpers.slint": "e37ec5dc48ff8efa8ee664a3a651d7c4ce5c80178df480b5192fbdc9276953ea"
+    }
+  },
+  "button": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/button.slint": "b9c36d0e484bb931e38faade00afe58ae26b293ce4b82cf613cd45c75d03b8e2"
+    }
+  },
+  "separator": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/separator.slint": "9ef37144aadb3a5306a3a847f27024589ec99d17a764e3c93d1d0000b29e28b2"
+    }
+  },
+  "icon": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/icon.slint": "df4687d04218e8bd6e58192e7666c0d0dbba3d080afd906d176c15c172476cdc"
+    }
+  },
+  "lucide-paths": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/lucide-paths.slint": "efc8bc6a7d578fc1d45072c7f5f63477718c36a907cd2a7709aef5d78dabad3d"
+    }
+  },
+  "dialog-panel": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/dialog-panel.slint": "faeaeedbf89938ab56da0e2b1fb5467dd7640fd64409529b85d0d96175c91376"
+    }
+  },
+  "dialog": {
+    "version": "0.35.0",
+    "files": {
+      "crates/gui/ui/slintcn/components/dialog.slint": "18f602fd30c507480ea9bdea554d17ebfe11dd12e411c6a8a97c31fb69f82384"
+    }
+  }
+}

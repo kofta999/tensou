@@ -35,6 +35,7 @@ pub fn run_gui(
         app_data.set_os_type(cfg.os_type.clone().into());
         app_data.set_download_dir(cfg.target_dir.to_string_lossy().to_string().into());
         app_data.set_overwrite_dest(cfg.overwrite_dest);
+        app_data.set_auto_accept(cfg.auto_accept);
         app_data.set_listen_port(cfg.listen_port as i32);
     }
 

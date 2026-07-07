@@ -7,6 +7,7 @@ export struct Device {
     ip: string,
     port: int,
     initials: string,
+    avatar_color: color,
 }
 
 export struct Transfer {
@@ -17,4 +18,31 @@ export struct Transfer {
     bytes_transferred: string,
     progress: float,
     speed_eta: string,
+}
+
+export struct ClipboardMessage {
+    id: int,
+    sender_name: string,
+    sender_ip: string,
+    content: string,
+    received_at: string,
+}
+
+export struct ConsentRequest {
+    transfer_id: int,
+    peer_ip: string,
+    device_name: string,
+    device_os: string,
+    job_name: string,
+}
+
+export enum AppTab {
+    send,
+    transfers,
+    settings,
+}
+
+export struct CancelRequest {
+    transfer_id: int,
+    job_name: string,
 }
