@@ -1,7 +1,9 @@
 use crate::GuiDevice;
 use crate::GuiTransfer;
 use crate::state::GuiEvent;
-use crate::views::{AppData, ConsentRequest, Device, MainWindow, ToastData, Transfer};
+use crate::views::{
+    AppData, ClipboardMessage, ConsentRequest, Device, MainWindow, ToastData, Transfer,
+};
 use slint::{ComponentHandle, Model, Weak};
 use std::sync::{Arc, Mutex};
 use tensou_core::discovery::DiscoveryEvent;
@@ -83,6 +85,7 @@ pub fn spawn_transfers(
     let local_completed_transfers_clone = local_completed_transfers.clone();
     let main_window_weak_transfers = main_window_weak.clone();
     tokio::spawn(async move {
+        let mut clipboard_ctx = arboard::Clipboard::new().ok();
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(33)); // ~30 FPS
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut active_dirty = false;
@@ -118,6 +121,7 @@ pub fn spawn_transfers(
                                 start_time: std::time::Instant::now(),
                                 cancel_token,
                                 local_dir,
+                                status: "Active".to_string(),
                             });
                             active_dirty = true;
                             completed_dirty = true; // Refresh lists in case
@@ -132,6 +136,7 @@ pub fn spawn_transfers(
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
                                 let mut completed_t = transfers.remove(pos);
                                 completed_t.bytes_transferred = completed_t.total_bytes;
+                                completed_t.status = "Completed".to_string();
                                 show_toast(
                                     main_window_weak_transfers.clone(),
                                     format!("Completed: {}", completed_t.job_name),
@@ -146,14 +151,56 @@ pub fn spawn_transfers(
                             transfer_id,
                             error,
                         } => {
-                            transfers.retain(|x| x.id != transfer_id);
-                            show_toast(
-                                main_window_weak_transfers.clone(),
-                                format!("Failed: {}", error),
-                                "error".to_string(),
-                            );
+                            if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
+                                let mut failed_t = transfers.remove(pos);
+                                failed_t.status = if error.contains("Cancelled") || error.contains("cancelled") {
+                                    "Cancelled".to_string()
+                                } else {
+                                    "Failed".to_string()
+                                };
+                                show_toast(
+                                    main_window_weak_transfers.clone(),
+                                    format!("{}: {}", failed_t.status, failed_t.job_name),
+                                    "error".to_string(),
+                                );
+                                completed_transfers.push(failed_t);
+                            }
                             active_dirty = true;
                             completed_dirty = true;
+                        }
+                        GuiEvent::TextReceived {
+                            job_name,
+                            content,
+                            peer_ip,
+                        } => {
+                            show_toast(
+                                main_window_weak_transfers.clone(),
+                                format!("Received text from {}", job_name),
+                                "success".to_string(),
+                            );
+
+                            if let Some(ref mut ctx) = clipboard_ctx {
+                                let _ = ctx.set_text(content.clone());
+                            }
+
+                            let _ = main_window_weak_transfers.upgrade_in_event_loop(move |ui| {
+                                let app_data = ui.global::<AppData>();
+                                let current_history = app_data.get_clipboard_history();
+                                let vec_model = slint::VecModel::default();
+
+                                let new_msg = ClipboardMessage {
+                                    id: rand::random::<i32>(),
+                                    sender_name: job_name.into(),
+                                    sender_ip: peer_ip.into(),
+                                    content: content.into(),
+                                };
+
+                                vec_model.push(new_msg);
+                                for old_msg in current_history.iter() {
+                                    vec_model.push(old_msg.clone());
+                                }
+                                app_data.set_clipboard_history(slint::ModelRc::new(vec_model));
+                            });
                         }
                         GuiEvent::IncomingConsentRequest {
                             transfer_id,
@@ -226,7 +273,7 @@ pub fn spawn_transfers(
                                         total_bytes: format!("{:.1} MB", total_mb).into(),
                                         bytes_transferred: format!("{:.1} MB", total_mb).into(),
                                         progress: 1.0,
-                                        speed_eta: "Completed".into(),
+                                        speed_eta: t.status.clone().into(),
                                     }
                                 })
                                 .collect::<Vec<Transfer>>())

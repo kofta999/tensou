@@ -29,8 +29,8 @@ export component TransfersView inherits VerticalLayout {
                         vertical-alignment: center;
                     }
 
-                    if AppData.active_transfers.length > 0: Rectangle {
-                        background: Theme.primary;
+                    Rectangle {
+                        background: Theme.surface-hover;
                         border-radius: 9px;
                         height: 18px;
                         width: active_badge_text.preferred-width + 12px;
@@ -38,7 +38,7 @@ export component TransfersView inherits VerticalLayout {
 
                         active_badge_text := Text {
                             text: AppData.active_transfers.length;
-                            color: Theme.text-dark;
+                            color: Theme.text-secondary;
                             font-size: 11px;
                             font-weight: 800;
                             horizontal-alignment: center;
@@ -48,24 +48,24 @@ export component TransfersView inherits VerticalLayout {
                 }
 
                 if AppData.active_transfers.length == 0: VerticalLayout {
-                    spacing: 12px;
-                    padding-top: 8px;
-                    padding-bottom: 8px;
+                    spacing: 16px;
+                    padding-top: 24px;
+                    padding-bottom: 24px;
 
                     // Styled minimalist transfer icon placeholder
                     Rectangle {
-                        width: 44px;
-                        height: 44px;
+                        width: 72px;
+                        height: 72px;
                         background: Theme.surface-hover;
-                        border-radius: 22px;
+                        border-radius: 36px;
                         border-width: 1px;
                         border-color: Theme.secondary;
                         x: (parent.width - self.width) / 2;
 
                         Image {
                             source: @image-url("icons/file.svg");
-                            width: 20px;
-                            height: 20px;
+                            width: 32px;
+                            height: 32px;
                             colorize: Theme.secondary;
                             x: (parent.width - self.width) / 2;
                             y: (parent.height - self.height) / 2;
@@ -73,28 +73,28 @@ export component TransfersView inherits VerticalLayout {
                     }
 
                     VerticalLayout {
-                        spacing: 2px;
+                        spacing: 6px;
                         Text {
                             text: "No Active Transfers";
                             color: Theme.text-primary;
                             horizontal-alignment: center;
-                            font-size: 13px;
-                            font-weight: 700;
+                            font-size: 16px;
+                            font-weight: 800;
                         }
 
                         Text {
                             text: "Your active file transfers will appear here.";
                             color: Theme.text-secondary;
                             horizontal-alignment: center;
-                            font-size: 11px;
+                            font-size: 12px;
                         }
                     }
 
                     ZenButton {
                         text: "Send a File";
                         primary: false;
-                        width: 120px;
-                        height: 32px;
+                        width: 140px;
+                        height: 36px;
                         x: (parent.width - self.width) / 2;
                         clicked => {
                             AppData.current_tab = AppTab.send; // Go to Send tab
@@ -171,7 +171,7 @@ export component TransfersView inherits VerticalLayout {
             }
 
             // Completed Transfers Section
-            if AppData.completed_transfers.length > 0: VerticalLayout {
+            VerticalLayout {
                 spacing: 12px;
 
                 HorizontalLayout {
@@ -204,7 +204,13 @@ export component TransfersView inherits VerticalLayout {
                     }
                 }
 
-                VerticalLayout {
+                if AppData.completed_transfers.length == 0: Text {
+                    text: "No transfers in session history yet.";
+                    color: Theme.text-secondary;
+                    font-size: 13px;
+                }
+
+                if AppData.completed_transfers.length > 0: VerticalLayout {
                     spacing: 12px;
                     for transfer in AppData.completed_transfers: Rectangle {
                         background: Theme.background;
@@ -247,8 +253,8 @@ export component TransfersView inherits VerticalLayout {
                                 }
 
                                 Text {
-                                    text: "Completed";
-                                    color: Theme.success;
+                                    text: transfer.speed_eta;
+                                    color: transfer.speed_eta == "Completed" ? Theme.success : (transfer.speed_eta == "Cancelled" ? Theme.secondary : Theme.error);
                                     font-size: 12px;
                                     font-weight: 600;
                                 }
@@ -277,8 +283,8 @@ export component TransfersView inherits VerticalLayout {
                             vertical-alignment: center;
                         }
 
-                        if AppData.clipboard_history.length > 0: Rectangle {
-                            background: Theme.secondary;
+                        Rectangle {
+                            background: Theme.surface-hover;
                             border-radius: 9px;
                             height: 18px;
                             width: clipboard_badge_text.preferred-width + 12px;
@@ -286,7 +292,7 @@ export component TransfersView inherits VerticalLayout {
 
                             clipboard_badge_text := Text {
                                 text: AppData.clipboard_history.length;
-                                color: Theme.text-dark;
+                                color: Theme.text-secondary;
                                 font-size: 11px;
                                 font-weight: 800;
                                 horizontal-alignment: center;

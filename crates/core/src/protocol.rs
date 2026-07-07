@@ -9,10 +9,28 @@ use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransferRequest {
+    File(Manifest),
+    Text { device_name: String, content: String },
+}
+
+impl TransferRequest {
+    pub fn job_name(&self) -> &str {
+        match self {
+            TransferRequest::File(manifest) => &manifest.job_name,
+            TransferRequest::Text { .. } => "Clipboard Text",
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Manifest {
-    /// Root folder name
+    /// Purely cosmetic name for UI/Notifications (e.g. "Cargo.lock" or "export.zip and 4 other items")
     pub job_name: String,
+    /// The top-level files or folders selected by the sender.
+    /// E.g., `["document.pdf", "MyPhotos"]` or `["Photos", "Videos"]`
+    pub top_level_targets: Vec<String>,
     pub files: Vec<Metadata>,
 }
 
@@ -194,8 +212,44 @@ impl ManifestManager {
         overwrite: bool,
     ) -> anyhow::Result<Vec<JobInstruction>> {
         let mut instructions = Vec::new();
+        let mut unique_mappings = HashMap::new(); // Map: Original Target -> Unique Target
 
-        for metadata in manifest.files.into_iter() {
+        for target in manifest.top_level_targets {
+            let original_path = staging.final_path(&target);
+            let has_staging =
+                staging.state_path(&target).exists() || staging.staging_dir.join(&target).is_dir();
+
+            let unique_path = if overwrite || has_staging {
+                original_path
+            } else {
+                crate::protocol::find_unique_path(&original_path)
+            };
+
+            let unique_name = unique_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            unique_mappings.insert(target, unique_name);
+        }
+
+        for mut metadata in manifest.files.into_iter() {
+            for (original_target, unique_target) in &unique_mappings {
+                if metadata.relative_path == *original_target {
+                    // Flat file match: rewrite directly
+                    metadata.relative_path = unique_target.clone();
+                    break;
+                } else if metadata
+                    .relative_path
+                    .starts_with(&format!("{}/", original_target))
+                {
+                    // Nested folder file match: replace parent prefix
+                    let subpath = &metadata.relative_path[original_target.len() + 1..];
+                    metadata.relative_path = format!("{}/{}", unique_target, subpath);
+                    break;
+                }
+            }
+
             if !is_safe_relative_path(Path::new(&metadata.relative_path)) {
                 bail!("Invalid path")
             }
@@ -231,11 +285,16 @@ impl ManifestManager {
             let metadata = Metadata {
                 file_id: i,
                 chunk_size: CHUNK_SIZE.into(),
-                relative_path: entry
-                    .path()
-                    .strip_prefix(path)?
-                    .to_string_lossy()
-                    .into_owned(),
+                relative_path: if path.is_dir() {
+                    let parent = path.parent().unwrap_or(path);
+                    entry
+                        .path()
+                        .strip_prefix(parent)?
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    entry.file_name().to_string_lossy().into_owned()
+                },
                 size: entry.metadata()?.len(),
             };
 
@@ -247,12 +306,84 @@ impl ManifestManager {
             files.push(metadata);
         }
 
+        let name = path
+            .file_name()
+            .map(|v| v.to_string_lossy().into_owned())
+            .ok_or(anyhow::anyhow!("Cannot get name of folder path"))?;
         Ok((
             Manifest {
-                job_name: path
+                job_name: name.clone(),
+                top_level_targets: vec![name],
+                files,
+            },
+            sessions,
+        ))
+    }
+
+    pub fn build_multiple(
+        paths: &[PathBuf],
+    ) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
+        let mut files = Vec::new();
+        let mut sessions = HashMap::new();
+        let mut file_id_counter = 0;
+        let mut top_level_targets = Vec::new();
+
+        for path in paths {
+            if let Some(path) = path.file_name() {
+                top_level_targets.push(path.to_string_lossy().into_owned());
+            }
+
+            let parent = path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("No parent directory"))?;
+
+            for entry in WalkDir::new(path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+            {
+                let metadata = Metadata {
+                    file_id: file_id_counter,
+                    chunk_size: CHUNK_SIZE.into(),
+                    relative_path: entry
+                        .path()
+                        .strip_prefix(parent)?
+                        .to_string_lossy()
+                        .into_owned(),
+                    size: entry.metadata()?.len(),
+                };
+
+                sessions.insert(
+                    file_id_counter,
+                    Arc::new(SendSession::new(metadata.clone(), entry.path())?),
+                );
+
+                files.push(metadata);
+                file_id_counter += 1;
+            }
+        }
+
+        // Generate descriptive job name (e.g. "document.pdf and 2 other items")
+        let job_name = if paths.len() == 1 {
+            paths[0]
+                .file_name()
+                .map(|v| v.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Files".to_string())
+        } else {
+            format!(
+                "{} and {} other items",
+                paths[0]
                     .file_name()
                     .map(|v| v.to_string_lossy().into_owned())
-                    .ok_or(anyhow::anyhow!("Cannot get name of folder path"))?,
+                    .unwrap_or_default(),
+                paths.len() - 1
+            )
+        };
+
+        Ok((
+            Manifest {
+                job_name,
+                top_level_targets,
                 files,
             },
             sessions,
@@ -273,6 +404,8 @@ pub trait TransferObserver: Send + Sync {
     fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {}
     fn on_transfer_complete(&self, _transfer_id: u32) {}
     fn on_transfer_failed(&self, _transfer_id: u32, _error: &str) {}
+    /// Called when a text/clipboard sharing event is received and accepted.
+    fn on_text_received(&self, _peer: SocketAddr, _job_name: String, _content: String) {}
 }
 
 #[async_trait]
@@ -541,7 +674,7 @@ mod tests {
 
         assert_eq!(manifest.job_name, "hello.txt");
         assert_eq!(manifest.files.len(), 1);
-        assert_eq!(manifest.files[0].relative_path, "");
+        assert_eq!(manifest.files[0].relative_path, "hello.txt");
         assert_eq!(manifest.files[0].size, 11);
         assert_eq!(sessions.len(), 1);
     }
@@ -559,13 +692,17 @@ mod tests {
         assert_eq!(manifest.files.len(), 2);
         assert_eq!(sessions.len(), 2);
 
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        let expected_a = format!("{}/a.txt", dir_name);
+        let expected_b = format!("{}/sub/b.txt", dir_name);
+
         let paths: Vec<&str> = manifest
             .files
             .iter()
             .map(|m| m.relative_path.as_str())
             .collect();
-        assert!(paths.contains(&"a.txt"));
-        assert!(paths.contains(&"sub/b.txt"));
+        assert!(paths.contains(&expected_a.as_str()));
+        assert!(paths.contains(&expected_b.as_str()));
     }
 
     /// Verifies that paths containing traversal components like `..` are explicitly rejected.
@@ -574,14 +711,13 @@ mod tests {
         let staging_dir = tempdir().unwrap();
         let staging = std::sync::Arc::new(crate::disk::TransferStaging::new(
             staging_dir.path().to_path_buf(),
-            "job",
-            true,
-            false,
+            1,
         ));
         staging.prepare().unwrap();
 
         let manifest = Manifest {
             job_name: "job".into(),
+            top_level_targets: vec![],
             files: vec![Metadata {
                 file_id: 0,
                 relative_path: "../escape.txt".into(),
@@ -592,5 +728,56 @@ mod tests {
 
         let result = ManifestManager::parse(manifest, staging, false);
         assert!(result.is_err(), "Path traversal should be rejected");
+    }
+
+    /// Verifies that ManifestManager::parse correctly renames top-level targets to resolve collisions.
+    #[test]
+    fn manifest_parse_resolves_unique_targets() {
+        let downloads_dir = tempdir().unwrap();
+
+        // Pre-create an existing file and folder to trigger collisions
+        std::fs::write(downloads_dir.path().join("a.txt"), b"existing file").unwrap();
+        std::fs::create_dir(downloads_dir.path().join("MyPhotos")).unwrap();
+        std::fs::write(
+            downloads_dir.path().join("MyPhotos/pic1.jpg"),
+            b"existing pic",
+        )
+        .unwrap();
+
+        let staging = std::sync::Arc::new(crate::disk::TransferStaging::new(
+            downloads_dir.path().to_path_buf(),
+            1,
+        ));
+        staging.prepare().unwrap();
+
+        // Manifest containing the colliding targets
+        let manifest = Manifest {
+            job_name: "multi_transfer".into(),
+            top_level_targets: vec!["a.txt".into(), "MyPhotos".into()],
+            files: vec![
+                Metadata {
+                    file_id: 0,
+                    relative_path: "a.txt".into(),
+                    size: 5,
+                    chunk_size: 4,
+                },
+                Metadata {
+                    file_id: 1,
+                    relative_path: "MyPhotos/pic1.jpg".into(),
+                    size: 5,
+                    chunk_size: 4,
+                },
+            ],
+        };
+
+        let instructions = ManifestManager::parse(manifest, staging, false).unwrap();
+        assert_eq!(instructions.len(), 2);
+
+        // Check that paths are correctly updated to unique names
+        assert_eq!(instructions[0].metadata.relative_path, "a (1).txt");
+        assert_eq!(
+            instructions[1].metadata.relative_path,
+            "MyPhotos (1)/pic1.jpg"
+        );
     }
 }

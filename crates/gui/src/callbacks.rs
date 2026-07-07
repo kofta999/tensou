@@ -39,7 +39,7 @@ pub fn setup(
             if let Ok(target_addr) = ip_str.parse::<SocketAddr>() {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title("Select File to Send")
-                    .pick_file()
+                    .pick_files()
                 {
                     send_file_background(event_tx.clone(), target_addr, path);
                 }
@@ -56,7 +56,7 @@ pub fn setup(
             if let Ok(target_addr) = ip_str.parse::<SocketAddr>() {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title("Select Folder to Send")
-                    .pick_folder()
+                    .pick_folders()
                 {
                     send_file_background(event_tx.clone(), target_addr, path);
                 }
@@ -73,7 +73,7 @@ pub fn setup(
             let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
             if let Some(path) = rfd::FileDialog::new()
                 .set_title("Select File to Send")
-                .pick_file()
+                .pick_files()
             {
                 send_file_background(event_tx.clone(), target_addr, path);
             }
@@ -87,7 +87,7 @@ pub fn setup(
             let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
             if let Some(path) = rfd::FileDialog::new()
                 .set_title("Select Folder to Send")
-                .pick_folder()
+                .pick_folders()
             {
                 send_file_background(event_tx.clone(), target_addr, path);
             }
@@ -201,37 +201,76 @@ pub fn setup(
         }
     });
 
-    // Send Text to Device (Stub)
+    // Send Text to Device
     main_window.global::<Logic>().on_send_text_to_device({
+        let config = config.clone();
         move |dev, text| {
-            log::info!("Send text to device ({}): {}", dev.display_name, text);
-            // User will wire up backend text protocol
+            if let Ok(target_addr) = format!("{}:{}", dev.ip, dev.port).parse::<SocketAddr>() {
+                let text_content = text.to_string();
+                let device_name = config.lock().unwrap().display_name.clone();
+                tokio::spawn(async move {
+                    let send_type = net::SendType::Text {
+                        device_name,
+                        content: text_content,
+                    };
+                    if let Err(e) =
+                        net::Sender::connect(target_addr, send_type, CancellationToken::new()).await
+                    {
+                        log::error!("Failed to send text to device: {e}");
+                    }
+                });
+            }
         }
     });
 
-    // Send Text Direct (Stub)
+    // Send Text Direct
     main_window.global::<Logic>().on_send_text_direct({
+        let config = config.clone();
         move |ip_str, text| {
-            log::info!("Send text direct to {}: {}", ip_str, text);
-            // User will wire up backend text protocol
+            let ip_str = ip_str.to_string();
+            let target_addr: Result<SocketAddr, _> = if ip_str.contains(':') {
+                ip_str.parse()
+            } else {
+                format!("{}:9999", ip_str).parse()
+            };
+
+            if let Ok(target_addr) = target_addr {
+                let text_content = text.to_string();
+                let device_name = config.lock().unwrap().display_name.clone();
+                tokio::spawn(async move {
+                    let send_type = net::SendType::Text {
+                        device_name,
+                        content: text_content,
+                    };
+                    if let Err(e) =
+                        net::Sender::connect(target_addr, send_type, CancellationToken::new()).await
+                    {
+                        log::error!("Failed to send text direct: {e}");
+                    }
+                });
+            }
         }
     });
 
     // Copy to Clipboard
-    main_window.global::<Logic>().on_copy_to_clipboard(move |text| {
-        if let Ok(mut ctx) = arboard::Clipboard::new() {
-            let _ = ctx.set_text(text.to_string());
-        }
-    });
+    main_window
+        .global::<Logic>()
+        .on_copy_to_clipboard(move |text| {
+            if let Ok(mut ctx) = arboard::Clipboard::new() {
+                let _ = ctx.set_text(text.to_string());
+            }
+        });
 
     // Paste from Clipboard
-    main_window.global::<Logic>().on_paste_from_clipboard(move || {
-        if let Ok(mut ctx) = arboard::Clipboard::new() {
-            ctx.get_text().unwrap_or_default().into()
-        } else {
-            "".into()
-        }
-    });
+    main_window
+        .global::<Logic>()
+        .on_paste_from_clipboard(move || {
+            if let Ok(mut ctx) = arboard::Clipboard::new() {
+                ctx.get_text().unwrap_or_default().into()
+            } else {
+                "".into()
+            }
+        });
 
     // Clear Clipboard History
     main_window.global::<Logic>().on_clear_clipboard_history({
@@ -239,7 +278,8 @@ pub fn setup(
         move || {
             if let Some(ui) = main_window_weak.upgrade() {
                 let empty_model = std::rc::Rc::new(slint::VecModel::default());
-                ui.global::<AppData>().set_clipboard_history(empty_model.into());
+                ui.global::<AppData>()
+                    .set_clipboard_history(empty_model.into());
             }
         }
     });
@@ -248,29 +288,47 @@ pub fn setup(
 fn send_file_background(
     event_tx: mpsc::UnboundedSender<GuiEvent>,
     target_addr: SocketAddr,
-    path: PathBuf,
+    paths: Vec<PathBuf>,
 ) {
     let transfer_id = rand::random::<u32>();
     let tx_clone = event_tx.clone();
 
     tokio::spawn(async move {
-        let job_name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Unknown".to_string());
+        let job_name = if paths.len() == 1 {
+            paths[0]
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            format!(
+                "{} and {} other items",
+                paths[0]
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                paths.len() - 1
+            )
+        };
 
-        match net::Sender::connect(target_addr, &path, CancellationToken::new()).await {
-            Ok(client) => {
-                let local_dir = path
+        match net::Sender::connect(
+            target_addr,
+            net::SendType::Multiple(&paths),
+            CancellationToken::new(),
+        )
+        .await
+        {
+            Ok(Some(client)) => {
+                // Determine a safe base parent directory to store completed reference
+                let local_dir = paths[0]
                     .parent()
                     .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| path.clone());
-
+                    .unwrap_or_else(|| paths[0].clone());
                 let total_bytes = client.get_remaining_bytes();
+
                 let _ = tx_clone.send(GuiEvent::TransferStarted {
                     transfer_id,
                     is_sender: true,
-                    job_name: job_name.clone(),
+                    job_name,
                     total_bytes,
                     cancel_token: client.cancel_token.clone(),
                     local_dir: local_dir.clone(),
@@ -295,6 +353,7 @@ fn send_file_background(
                     }
                 }
             }
+            Ok(None) => {}
             Err(e) => {
                 let _ = tx_clone.send(GuiEvent::TransferFailed {
                     transfer_id,

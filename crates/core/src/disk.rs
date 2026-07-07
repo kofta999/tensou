@@ -294,82 +294,35 @@ pub struct TransferStaging {
     pub dest_dir: PathBuf,
     /// Hidden staging directory on the same partition (e.g. `Downloads/MyTransfer/.tensou/`)
     pub staging_dir: PathBuf,
-    /// Either directory name or file name if it's a single-file operation (e.g. `MyPhotos (1)`)
-    job_name: String,
-    is_single_file: bool,
 }
 
 impl TransferStaging {
-    pub fn new(
-        downloads_dir: PathBuf,
-        job_name: &str,
-        overwrite: bool,
-        is_single_file: bool,
-    ) -> Self {
-        let base_path = downloads_dir.join(job_name);
-        let has_staging_dir = std::fs::read_dir(base_path.join(STAGING_DIR_NAME))
-            .map(|mut i| i.next().is_some())
-            .unwrap_or(false);
-        let unique_path = if overwrite || has_staging_dir {
-            base_path
-        } else {
-            crate::protocol::find_unique_path(&base_path)
-        };
-
-        let resolved_job_name = unique_path
-            .file_name()
-            .map(|v| v.to_string_lossy().into_owned())
-            .unwrap_or_else(|| job_name.to_string());
-
-        let dest_dir = if is_single_file {
-            downloads_dir
-        } else {
-            unique_path
-        };
-
+    pub fn new(downloads_dir: PathBuf, transfer_id: u32) -> Self {
         Self {
-            staging_dir: dest_dir.join(STAGING_DIR_NAME),
-            dest_dir,
-            job_name: resolved_job_name,
-            is_single_file,
+            staging_dir: downloads_dir
+                .join(STAGING_DIR_NAME)
+                .join(transfer_id.to_string()),
+            dest_dir: downloads_dir,
         }
     }
 
     /// Resolve where a partial download should go (e.g. `.tensou/subfolder/file.part`)
     pub fn part_path(&self, relative_path: &str) -> PathBuf {
-        let path_name = if self.is_single_file && relative_path.is_empty() {
-            &self.job_name
-        } else {
-            relative_path
-        };
-
         self.staging_dir
-            .join(path_name)
+            .join(relative_path)
             .with_added_extension("part")
     }
 
     /// Resolve where a transfer state file should go (e.g. `.tensou/subfolder/file.state`)
     pub fn state_path(&self, relative_path: &str) -> PathBuf {
-        let path_name = if self.is_single_file && relative_path.is_empty() {
-            &self.job_name
-        } else {
-            relative_path
-        };
-
         self.staging_dir
-            .join(path_name)
+            .join(relative_path)
             .with_added_extension("state")
     }
 
     /// Resolve the final destination path (e.g. `MyTransfer/subfolder/file`)
     pub fn final_path(&self, relative_path: &str) -> PathBuf {
-        let path_name = if self.is_single_file && relative_path.is_empty() {
-            &self.job_name
-        } else {
-            relative_path
-        };
-
-        self.dest_dir.join(path_name)
+        self.dest_dir.join(relative_path)
     }
 
     pub fn prepare(&self) -> std::io::Result<()> {
@@ -399,14 +352,15 @@ impl TransferStaging {
     /// Clean up the staging directory recursively
     pub fn cleanup(&self) -> std::io::Result<()> {
         if self.staging_dir.exists() {
-            return std::fs::remove_dir_all(&self.staging_dir);
+            std::fs::remove_dir_all(&self.staging_dir)?;
+
+            // Try to delete the parent `.tensou` folder to prevent clutter.
+            // This safely fails (and does nothing) if other concurrent transfers are still active in it!
+            if let Some(parent) = self.staging_dir.parent() {
+                let _ = std::fs::remove_dir(parent);
+            }
         }
         Ok(())
-    }
-
-    /// Accessor for the active job name (e.g. for notifications or UI tracking)
-    pub fn job_name(&self) -> &str {
-        &self.job_name
     }
 }
 
@@ -422,8 +376,8 @@ mod tests {
     struct TestObserver;
     impl TransferObserver for TestObserver {}
 
-    fn make_staging(dir: &std::path::Path, job: &str, single: bool) -> Arc<TransferStaging> {
-        let s = Arc::new(TransferStaging::new(dir.to_path_buf(), job, true, single));
+    fn make_staging(dir: &std::path::Path, transfer_id: u32) -> Arc<TransferStaging> {
+        let s = Arc::new(TransferStaging::new(dir.to_path_buf(), transfer_id));
         s.prepare().unwrap();
         s
     }
@@ -432,29 +386,32 @@ mod tests {
     #[test]
     fn staging_folder_transfer_paths() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), "MyPhotos", false);
+        let transfer_id = 0;
+        let staging = make_staging(dir.path(), transfer_id);
 
         assert_eq!(
             staging.staging_dir,
-            dir.path().join("MyPhotos").join(STAGING_DIR_NAME)
-        );
-        assert_eq!(
-            staging.part_path("nested/img.jpg"),
             dir.path()
-                .join("MyPhotos")
                 .join(STAGING_DIR_NAME)
-                .join("nested/img.jpg.part")
+                .join(transfer_id.to_string())
         );
         assert_eq!(
-            staging.state_path("nested/img.jpg"),
+            staging.part_path("MyPhotos/nested/img.jpg"),
             dir.path()
-                .join("MyPhotos")
                 .join(STAGING_DIR_NAME)
-                .join("nested/img.jpg.state")
+                .join(transfer_id.to_string())
+                .join("MyPhotos/nested/img.jpg.part")
         );
         assert_eq!(
-            staging.final_path("nested/img.jpg"),
-            dir.path().join("MyPhotos").join("nested/img.jpg")
+            staging.state_path("MyPhotos/nested/img.jpg"),
+            dir.path()
+                .join(STAGING_DIR_NAME)
+                .join(transfer_id.to_string())
+                .join("MyPhotos/nested/img.jpg.state")
+        );
+        assert_eq!(
+            staging.final_path("MyPhotos/nested/img.jpg"),
+            dir.path().join("MyPhotos/nested/img.jpg")
         );
     }
 
@@ -462,47 +419,40 @@ mod tests {
     #[test]
     fn staging_single_file_transfer_paths() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), "photo.jpg", true);
+        let transfer_id = 0;
+        let staging = make_staging(dir.path(), transfer_id);
 
-        assert_eq!(staging.staging_dir, dir.path().join(STAGING_DIR_NAME));
         assert_eq!(
-            staging.part_path(""),
-            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.part")
+            staging.staging_dir,
+            dir.path()
+                .join(STAGING_DIR_NAME)
+                .join(transfer_id.to_string())
         );
         assert_eq!(
-            staging.state_path(""),
-            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.state")
+            staging.part_path("photo.jpg"),
+            dir.path()
+                .join(STAGING_DIR_NAME)
+                .join(transfer_id.to_string())
+                .join("photo.jpg.part")
         );
-        assert_eq!(staging.final_path(""), dir.path().join("photo.jpg"));
-    }
-
-    /// Verifies that job name is deduplicated by finding a unique path if overwrite is disabled.
-    #[test]
-    fn staging_overwrite_false_deduplicates_job_name() {
-        let dir = tempdir().unwrap();
-        fs::create_dir(dir.path().join("MyPhotos")).unwrap();
-
-        let staging = Arc::new(TransferStaging::new(
-            dir.path().to_path_buf(),
-            "MyPhotos",
-            false,
-            false,
-        ));
-
-        assert_eq!(staging.job_name(), "MyPhotos (1)");
-        assert_eq!(staging.dest_dir, dir.path().join("MyPhotos (1)"));
+        assert_eq!(
+            staging.state_path("photo.jpg"),
+            dir.path()
+                .join(STAGING_DIR_NAME)
+                .join(transfer_id.to_string())
+                .join("photo.jpg.state")
+        );
+        assert_eq!(
+            staging.final_path("photo.jpg"),
+            dir.path().join("photo.jpg")
+        );
     }
 
     /// Verifies that prepare() correctly creates the hidden staging directory on disk.
     #[test]
     fn staging_prepare_creates_staging_dir() {
         let dir = tempdir().unwrap();
-        let staging = Arc::new(TransferStaging::new(
-            dir.path().to_path_buf(),
-            "job",
-            true,
-            false,
-        ));
+        let staging = Arc::new(TransferStaging::new(dir.path().to_path_buf(), 0));
         assert!(!staging.staging_dir.exists());
         staging.prepare().unwrap();
         assert!(staging.staging_dir.exists());
@@ -512,7 +462,7 @@ mod tests {
     #[test]
     fn staging_cleanup_removes_dir() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), "job", false);
+        let staging = make_staging(dir.path(), 0);
         assert!(staging.staging_dir.exists());
         staging.cleanup().unwrap();
         assert!(!staging.staging_dir.exists());
@@ -522,7 +472,7 @@ mod tests {
     #[test]
     fn staging_create_file_staging_dir_nested() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), "job", false);
+        let staging = make_staging(dir.path(), 0);
         staging.create_file_staging_dir("a/b/c.txt").unwrap();
         assert!(staging.staging_dir.join("a/b").is_dir());
     }
@@ -531,7 +481,7 @@ mod tests {
     #[test]
     fn staging_create_file_destination_dir_nested() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), "job", false);
+        let staging = make_staging(dir.path(), 0);
         staging.create_file_destination_dir("a/b/c.txt").unwrap();
         assert!(staging.dest_dir.join("a/b").is_dir());
     }
@@ -558,7 +508,7 @@ mod tests {
         let (tx, rx) = mpsc::channel::<ChunkPacket>(16);
         let instruction = JobInstruction::new(send_session.get_metadata());
 
-        let staging = make_staging(dest_dir.path(), "source.bin", true);
+        let staging = make_staging(dest_dir.path(), 0);
 
         let ignition = IgnitionPayload {
             ins: instruction,
@@ -623,8 +573,8 @@ mod tests {
         let instruction = JobInstruction::new(send_session.get_metadata());
         let cancel_token = CancellationToken::new();
 
-        let staging = make_staging(dest_dir.path(), "big.bin", true);
-        let part_path = staging.part_path("");
+        let staging = make_staging(dest_dir.path(), 0);
+        let part_path = staging.part_path("big.bin");
 
         let (obs_tx, mut obs_rx) = mpsc::channel(1);
         let observer = Arc::new(ChunkSignalObserver { tx: obs_tx });

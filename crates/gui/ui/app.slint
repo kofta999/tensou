@@ -1,4 +1,11 @@
-import { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest } from "types.slint";
+import {
+    Device,
+    Transfer,
+    ClipboardMessage,
+    ConsentRequest,
+    AppTab,
+    CancelRequest,
+} from "types.slint";
 import { TabButton, ZenButton } from "components.slint";
 import { SendView } from "send-view.slint";
 import { TransfersView } from "transfers-view.slint";
@@ -39,7 +46,8 @@ export component MainWindow inherits Window {
                     text: "送";
                     font-size: 20px;
                     font-weight: 900;
-                    color: Theme.text-dark;
+                    font-family: "PingFang SC, Microsoft YaHei, Noto Sans CJK SC, WenQuanYi Micro Hei, sans-serif";
+                    color: #222333;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -188,14 +196,14 @@ export component MainWindow inherits Window {
 
                     Text {
                         text: "Wants to send you:";
-                        font-size: 11px;
+                        font-size: 13px;
                         color: Theme.text-secondary;
                     }
 
                     Text {
                         text: AppData.consent_request.job_name;
-                        font-size: 15px;
-                        font-weight: 700;
+                        font-size: 18px;
+                        font-weight: 800;
                         color: Theme.text-primary;
                         wrap: word-wrap;
                         width: 250px;
@@ -209,23 +217,23 @@ export component MainWindow inherits Window {
                 alignment: stretch;
 
                 ZenButton {
-                    text: "Decline";
-                    primary: false;
-                    height: 36px;
-                    horizontal-stretch: 1;
-                    clicked => {
-                        Logic.consent_response(AppData.consent_request.transfer_id, false);
-                        AppData.has_consent_request = false;
-                    }
-                }
-
-                ZenButton {
                     text: "Accept";
                     primary: true;
                     height: 36px;
                     horizontal-stretch: 1;
                     clicked => {
                         Logic.consent_response(AppData.consent_request.transfer_id, true);
+                        AppData.has_consent_request = false;
+                    }
+                }
+
+                ZenButton {
+                    text: "Decline";
+                    primary: false;
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        Logic.consent_response(AppData.consent_request.transfer_id, false);
                         AppData.has_consent_request = false;
                     }
                 }

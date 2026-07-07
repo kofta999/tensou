@@ -1,4 +1,11 @@
-import { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest } from "types.slint";
+import {
+    Device,
+    Transfer,
+    ClipboardMessage,
+    ConsentRequest,
+    AppTab,
+    CancelRequest,
+} from "types.slint";
 
 export global Theme {
     in-out property <bool> is_dark: true;
@@ -13,7 +20,7 @@ export global Theme {
     out property <color> error: #c9463c;
     out property <color> warning: #c9a84c;
     out property <color> info: #5b8ba0;                                // Muted Indigo
-    
+
     out property <color> text-primary: is_dark ? #e8e3d8 : #1c1c1c;
     out property <color> text-secondary: is_dark ? #7a7570 : #8a837a;
     out property <color> text-dark: #121212;

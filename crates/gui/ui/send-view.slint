@@ -25,367 +25,372 @@ export component SendView inherits FocusScope {
     VerticalLayout {
         padding: 24px;
         spacing: 20px;
-    
-    if !showing_device_actions : VerticalLayout {
-        spacing: 18px;
-        
-        HorizontalLayout {
-            alignment: space-between;
-            spacing: 8px;
-            
+
+        if !showing_device_actions: VerticalLayout {
+            spacing: 18px;
+
             HorizontalLayout {
+                alignment: space-between;
                 spacing: 8px;
-                alignment: start;
-                Text {
-                    text: "Local Network Devices";
-                    font-size: 16px;
-                    font-weight: 800;
-                    color: Theme.text-primary;
-                }
-                
-                // Pulsing dot indicator
-                Rectangle {
-                    width: 8px;
-                    height: 8px;
-                    background: AppData.devices.length == 0 ? Theme.secondary : Theme.success;
-                    border-radius: 4px;
-                    y: (parent.height - self.height) / 2;
-                    opacity: 0.5 + 0.5 * Math.sin(animation-tick() / 300ms * 1rad);
-                }
-            }
-            
-            Text {
-                text: AppData.devices.length + " online";
-                color: Theme.text-secondary;
-                font-size: 12px;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-        }
-        
-        if AppData.devices.length == 0 : VerticalLayout {
-            alignment: center;
-            height: 140px;
-            spacing: 16px;
 
-            // Minimalist pulsing wave representation (concentric Japanese-style waves)
-            Rectangle {
-                width: 60px;
-                height: 60px;
-                x: (parent.width - self.width) / 2;
-
-                // Center dot
-                Rectangle {
-                    width: 12px;
-                    height: 12px;
-                    background: Theme.primary;
-                    border-radius: 6px;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                }
-
-                // Ring 1
-                Rectangle {
-                    width: 30px + 20px * Math.sin(animation-tick() / 400ms * 1rad);
-                    height: self.width;
-                    border-width: 1px;
-                    border-color: Theme.primary;
-                    border-radius: self.width / 2;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    opacity: 1.0 - (self.width - 30px) / 20px;
-                }
-
-                // Ring 2
-                Rectangle {
-                    width: 45px + 15px * Math.cos(animation-tick() / 500ms * 1rad);
-                    height: self.width;
-                    border-width: 1.5px;
-                    border-color: Theme.secondary;
-                    border-radius: self.width / 2;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    opacity: 1.0 - (self.width - 30px) / 30px;
-                }
-            }
-
-            Text {
-                text: "Scanning for receivers on the LAN...";
-                color: Theme.text-secondary;
-                horizontal-alignment: center;
-                font-size: 13px;
-                font-weight: 600;
-            }
-        }
-        
-        if AppData.devices.length > 0 : ScrollView {
-            preferred-height: 150px;
-            vertical-stretch: 1;
-            VerticalLayout {
-                spacing: 10px;
-                for dev in AppData.devices : DeviceCard {
-                    dev: dev;
-                    clicked => {
-                        selected_device = dev;
-                        is_direct_connect = false;
-                        showing_device_actions = true;
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            background: drop_area.has-drag ? Theme.surface-hover : Theme.surface;
-            border-radius: 12px;
-            border-width: 2px;
-            border-color: drop_area.has-drag ? Theme.secondary : transparent;
-            height: layout.preferred-height;
-            
-            animate background { duration: 150ms; }
-            animate border-color { duration: 150ms; }
-            
-            drop_area := DropArea {
-                width: 100%;
-                height: 100%;
-                can-drop(event) => { return DragAction.copy; }
-                dropped(event) => {
-                    Logic.direct_send_dropped_file(ip_input.text, event.data);
-                    return DragAction.copy;
-                }
-            }
-            
-            layout := VerticalLayout {
-                padding: 16px;
-                spacing: 12px;
-                alignment: center;
-                
-                Text {
-                    text: "Can't find device? Enter IP:";
-                    color: Theme.text-secondary;
-                    font-size: 13px;
-                    font-weight: 700;
-                }
-                
                 HorizontalLayout {
-                    spacing: 12px;
-                    
-                    ip_input := Input {
-                        text: AppData.direct_ip;
-                        placeholder: "192.168.1.100:6967";
-                        horizontal-stretch: 1;
-                        edited(text) => {
-                            AppData.direct_ip = text;
-                            Logic.direct_ip_changed(text);
-                        }
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        text: "Local Network Devices";
+                        font-size: 16px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
                     }
-                    
-                    ZenButton {
-                        text: "Send";
-                        width: 80px;
-                        height: 38px;
-                        primary: true;
+
+                    // Pulsing dot indicator
+                Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        background: AppData.devices.length == 0 ? Theme.secondary : Theme.success;
+                        border-radius: 4px;
+                        y: (parent.height - self.height) / 2;
+                        opacity: 0.5 + 0.5 * Math.sin(animation-tick() / 300ms * 1rad);
+                    }
+                }
+
+                Text {
+                    text: AppData.devices.length + " online";
+                    color: Theme.text-secondary;
+                    font-size: 12px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+
+            if AppData.devices.length == 0: VerticalLayout {
+                alignment: center;
+                height: 140px;
+                spacing: 16px;
+
+                // Minimalist pulsing wave representation (concentric Japanese-style waves)
+            Rectangle {
+                    width: 60px;
+                    height: 60px;
+                    x: (parent.width - self.width) / 2;
+
+                    // Center dot
+                Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        background: Theme.primary;
+                        border-radius: 6px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+
+                    // Ring 1
+                Rectangle {
+                        width: 30px + 20px * Math.sin(animation-tick() / 400ms * 1rad);
+                        height: self.width;
+                        border-width: 1px;
+                        border-color: Theme.primary;
+                        border-radius: self.width / 2;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        opacity: 1.0 - (self.width - 30px) / 20px;
+                    }
+
+                    // Ring 2
+                Rectangle {
+                        width: 45px + 15px * Math.cos(animation-tick() / 500ms * 1rad);
+                        height: self.width;
+                        border-width: 1.5px;
+                        border-color: Theme.secondary;
+                        border-radius: self.width / 2;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        opacity: 1.0 - (self.width - 30px) / 30px;
+                    }
+                }
+
+                Text {
+                    text: "Scanning for receivers on the LAN...";
+                    color: Theme.text-secondary;
+                    horizontal-alignment: center;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+            }
+
+            if AppData.devices.length > 0: ScrollView {
+                preferred-height: 150px;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 10px;
+                    for dev in AppData.devices: DeviceCard {
+                        dev: dev;
                         clicked => {
-                            is_direct_connect = true;
+                            selected_device = dev;
+                            is_direct_connect = false;
                             showing_device_actions = true;
                         }
                     }
                 }
             }
-        }
-    }
-    
-    if showing_device_actions : VerticalLayout {
-        spacing: 20px;
-        
-        // Part 1: Back button + Destination details card
-        HorizontalLayout {
-            spacing: 12px;
-            
-            ZenButton {
-                text: "←";
-                width: 48px;
-                height: 68px; // Match destination card height!
-                primary: false;
-                clicked => {
-                    showing_device_actions = false;
-                }
-            }
-            
+
             Rectangle {
-                background: Theme.surface;
+                background: drop_area.has-drag ? Theme.surface-hover : Theme.surface;
                 border-radius: 12px;
-                border-width: 1px;
-                border-color: Theme.surface-hover;
-                horizontal-stretch: 1;
-                height: 68px; // Compact height
-                
-                HorizontalLayout {
-                    padding-left: 14px;
-                    padding-right: 14px;
-                    spacing: 14px;
-                    alignment: start;
-                    
-                    // Avatar
-                    Rectangle {
-                        width: 42px;
-                        height: 42px;
-                        background: Theme.background;
-                        border-radius: 21px;
-                        border-width: 2px;
-                        border-color: is_direct_connect ? Theme.secondary : selected_device.avatar_color;
-                        y: (parent.height - self.height) / 2;
-                        
-                        Text {
-                            text: is_direct_connect ? "IP" : selected_device.initials;
-                            color: is_direct_connect ? Theme.secondary : selected_device.avatar_color;
-                            font-size: 16px;
-                            font-weight: 800;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                border-width: 2px;
+                border-color: drop_area.has-drag ? Theme.secondary : transparent;
+                height: layout.preferred-height;
+
+                animate background { duration: 150ms; }
+                animate border-color { duration: 150ms; }
+
+                drop_area := DropArea {
+                    width: 100%;
+                    height: 100%;
+                    can-drop(event) => {
+                        return DragAction.copy;
                     }
-                    
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: start;
-                            
-                            Text {
-                                text: is_direct_connect ? "Direct IP Connection" : selected_device.display_name;
-                                color: Theme.text-primary;
-                                font-weight: 800;
-                                font-size: 16px;
-                            }
-                            
-                            Image {
-                                source: is_direct_connect ? @image-url("icons/network.svg") : (selected_device.os_type == "linux" ? @image-url("icons/linux.svg") : (selected_device.os_type == "windows" ? @image-url("icons/windows.svg") : (selected_device.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg"))));
-                                width: 18px;
-                                height: 18px;
-                                colorize: Theme.text-secondary;
-                                y: (parent.height - self.height) / 2;
-                            }
-                        }
-                        
-                        Text {
-                            text: is_direct_connect ? AppData.direct_ip : selected_device.ip + ":" + selected_device.port;
-                            color: Theme.text-secondary;
-                            font-size: 12px;
-                            font-weight: 500;
-                        }
+                    dropped(event) => {
+                        Logic.direct_send_dropped_file(ip_input.text, event.data);
+                        return DragAction.copy;
                     }
                 }
-            }
-        }
-        
-        // Part 2: Drag & Drop Space (File Drop Area)
-        Rectangle {
-            background: actions_drop_area.has-drag ? Theme.surface-hover : Theme.background;
-            border-radius: 12px;
-            border-width: 2px;
-            border-color: actions_drop_area.has-drag ? Theme.secondary : Theme.surface-hover;
-            height: 120px;
-            
-            animate background { duration: 150ms; }
-            animate border-color { duration: 150ms; }
 
-            actions_drop_area := DropArea {
-                width: 100%;
-                height: 100%;
-                can-drop(event) => { return DragAction.copy; }
-                dropped(event) => {
-                    if is_direct_connect {
-                        Logic.direct_send_dropped_file(AppData.direct_ip, event.data);
-                    } else {
-                        Logic.device_send_dropped_file(selected_device, event.data);
-                    }
-                    return DragAction.copy;
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                spacing: 12px;
-                
-                HorizontalLayout {
+                layout := VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
                     alignment: center;
-                    Image {
-                        source: @image-url("icons/file.svg");
-                        width: 36px;
-                        height: 36px;
-                        colorize: actions_drop_area.has-drag ? Theme.secondary : Theme.text-secondary;
-                        animate colorize { duration: 150ms; }
-                    }
-                }
 
-                Text {
-                    text: "Drag & Drop files here to send";
-                    color: actions_drop_area.has-drag ? #ffffff : Theme.text-secondary;
-                    font-size: 13px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    animate color { duration: 150ms; }
+                    Text {
+                        text: "Can't find device? Enter IP:";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        font-weight: 700;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+
+                        ip_input := Input {
+                            text: AppData.direct_ip;
+                            placeholder: "192.168.1.100:6967";
+                            horizontal-stretch: 1;
+                            edited(text) => {
+                                AppData.direct_ip = text;
+                                Logic.direct_ip_changed(text);
+                            }
+                        }
+
+                        ZenButton {
+                            text: "Send";
+                            width: 80px;
+                            height: 38px;
+                            primary: true;
+                            clicked => {
+                                is_direct_connect = true;
+                                showing_device_actions = true;
+                            }
+                        }
+                    }
                 }
             }
         }
-        
-        // Part 3: Buttons stacked under each other
+
+        if showing_device_actions: VerticalLayout {
+            spacing: 20px;
+
+            // Part 1: Back button + Destination details card
+        HorizontalLayout {
+                spacing: 12px;
+
+                ZenButton {
+                    text: "←";
+                    width: 48px;
+                    height: 68px; // Match destination card height!
+                primary: false;
+                    clicked => {
+                        showing_device_actions = false;
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.surface-hover;
+                    horizontal-stretch: 1;
+                    height: 68px; // Compact height
+
+                HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 14px;
+                        alignment: start;
+
+                        // Avatar
+                    Rectangle {
+                            width: 42px;
+                            height: 42px;
+                            background: Theme.background;
+                            border-radius: 21px;
+                            border-width: 2px;
+                            border-color: is_direct_connect ? Theme.secondary : selected_device.avatar_color;
+                            y: (parent.height - self.height) / 2;
+
+                            Text {
+                                text: is_direct_connect ? "IP" : selected_device.initials;
+                                color: is_direct_connect ? Theme.secondary : selected_device.avatar_color;
+                                font-size: 16px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+
+                                Text {
+                                    text: is_direct_connect ? "Direct IP Connection" : selected_device.display_name;
+                                    color: Theme.text-primary;
+                                    font-weight: 800;
+                                    font-size: 16px;
+                                }
+
+                                Image {
+                                    source: is_direct_connect ? @image-url("icons/network.svg") : (selected_device.os_type == "linux" ? @image-url("icons/linux.svg") : (selected_device.os_type == "windows" ? @image-url("icons/windows.svg") : (selected_device.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg"))));
+                                    width: 18px;
+                                    height: 18px;
+                                    colorize: Theme.text-secondary;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                            }
+
+                            Text {
+                                text: is_direct_connect ? AppData.direct_ip : selected_device.ip + ":" + selected_device.port;
+                                color: Theme.text-secondary;
+                                font-size: 12px;
+                                font-weight: 500;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Part 2: Drag & Drop Space (File Drop Area)
+        Rectangle {
+                background: actions_drop_area.has-drag ? Theme.surface-hover : Theme.background;
+                border-radius: 12px;
+                border-width: 2px;
+                border-color: actions_drop_area.has-drag ? Theme.secondary : Theme.surface-hover;
+                height: 120px;
+
+                animate background { duration: 150ms; }
+                animate border-color { duration: 150ms; }
+
+                actions_drop_area := DropArea {
+                    width: 100%;
+                    height: 100%;
+                    can-drop(event) => {
+                        return DragAction.copy;
+                    }
+                    dropped(event) => {
+                        if is_direct_connect {
+                            Logic.direct_send_dropped_file(AppData.direct_ip, event.data);
+                        } else {
+                            Logic.device_send_dropped_file(selected_device, event.data);
+                        }
+                        return DragAction.copy;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        Image {
+                            source: @image-url("icons/file.svg");
+                            width: 36px;
+                            height: 36px;
+                            colorize: actions_drop_area.has-drag ? Theme.secondary : Theme.text-secondary;
+                            animate colorize { duration: 150ms; }
+                        }
+                    }
+
+                    Text {
+                        text: "Drag & Drop files here to send";
+                        color: actions_drop_area.has-drag ? #ffffff : Theme.text-secondary;
+                        font-size: 13px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        animate color { duration: 150ms; }
+                    }
+                }
+            }
+
+            // Part 3: Buttons stacked under each other
         VerticalLayout {
-            spacing: 10px;
-            
-            ZenButton {
-                text: "Send File";
-                icon: @image-url("icons/file.svg");
-                has_icon: true;
-                primary: true;
-                clicked => {
-                    if is_direct_connect {
-                        Logic.direct_send_file(AppData.direct_ip);
-                    } else {
-                        Logic.device_send_file(selected_device);
+                spacing: 10px;
+
+                ZenButton {
+                    text: "Send Files";
+                    icon: @image-url("icons/file.svg");
+                    has_icon: true;
+                    primary: true;
+                    clicked => {
+                        if is_direct_connect {
+                            Logic.direct_send_file(AppData.direct_ip);
+                        } else {
+                            Logic.device_send_file(selected_device);
+                        }
                     }
                 }
-            }
-            
-            ZenButton {
-                text: "Send Folder";
-                icon: @image-url("icons/folder.svg");
-                has_icon: true;
-                primary: false;
-                clicked => {
-                    if is_direct_connect {
-                        Logic.direct_send_folder(AppData.direct_ip);
-                    } else {
-                        Logic.device_send_folder(selected_device);
+
+                ZenButton {
+                    text: "Send Folders";
+                    icon: @image-url("icons/folder.svg");
+                    has_icon: true;
+                    primary: false;
+                    clicked => {
+                        if is_direct_connect {
+                            Logic.direct_send_folder(AppData.direct_ip);
+                        } else {
+                            Logic.device_send_folder(selected_device);
+                        }
                     }
                 }
-            }
-            
-            ZenButton {
-                text: "Send Text";
-                icon: @image-url("icons/user.svg");
-                has_icon: true;
-                primary: false;
-                clicked => {
-                    showing_text_modal = true;
+
+                ZenButton {
+                    text: "Send Text";
+                    icon: @image-url("icons/user.svg");
+                    has_icon: true;
+                    primary: false;
+                    clicked => {
+                        showing_text_modal = true;
+                    }
                 }
             }
         }
     }
-}
 
     // Modal Overlay for Sending Text
-    if showing_text_modal : TouchArea {
+    if showing_text_modal: TouchArea {
         width: 100%;
         height: 100%;
-        
+
         // Block clicks to components below
-        clicked => {}
-        
+        clicked => {
+        }
+
         Rectangle {
             background: rgba(0, 0, 0, 0.6);
-            
+
             // Modal Dialog container
             Rectangle {
                 width: 320px;
@@ -396,14 +401,14 @@ export component SendView inherits FocusScope {
                 border-color: Theme.surface-hover;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                
+
                 drop-shadow-color: rgba(0, 0, 0, 0.5);
                 drop-shadow-blur: 24px;
-                
+
                 modal_layout := VerticalLayout {
                     padding: 20px;
                     spacing: 16px;
-                    
+
                     HorizontalLayout {
                         alignment: space-between;
                         Text {
@@ -413,7 +418,7 @@ export component SendView inherits FocusScope {
                             color: Theme.text-primary;
                             vertical-alignment: center;
                         }
-                        
+
                         // Icon button for pasting from clipboard
                         Rectangle {
                             width: 32px;
@@ -422,10 +427,10 @@ export component SendView inherits FocusScope {
                             border-radius: 6px;
                             border-width: 1px;
                             border-color: paste_touch.has-hover ? Theme.secondary : transparent;
-                            
+
                             animate background { duration: 150ms; }
                             animate border-color { duration: 150ms; }
-                            
+
                             Image {
                                 source: @image-url("icons/clipboard.svg");
                                 width: 18px;
@@ -435,7 +440,7 @@ export component SendView inherits FocusScope {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                             }
-                            
+
                             paste_touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => {
@@ -444,16 +449,16 @@ export component SendView inherits FocusScope {
                             }
                         }
                     }
-                    
+
                     text_input := Textarea {
                         placeholder: "Type or paste your text here...";
                         text <=> root.text_to_send;
                         preferred-height: 160px;
                     }
-                    
+
                     HorizontalLayout {
                         spacing: 12px;
-                        
+
                         ZenButton {
                             text: "Cancel";
                             primary: false;
@@ -463,7 +468,7 @@ export component SendView inherits FocusScope {
                                 root.text_to_send = "";
                             }
                         }
-                        
+
                         ZenButton {
                             text: "Send";
                             primary: true;
