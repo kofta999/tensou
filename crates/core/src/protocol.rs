@@ -574,7 +574,7 @@ mod tests {
         // Test 1: Empty state file (0 bytes)
         let mut ins = JobInstruction::new(m.clone());
         let state_file = dir.path().join("empty.state");
-        std::fs::write(&state_file, &[]).unwrap();
+        std::fs::write(&state_file, []).unwrap();
         let final_file = dir.path().join("empty.final");
         ins.load_state_from_disk(&state_file, &final_file, false)
             .unwrap();
@@ -585,7 +585,7 @@ mod tests {
         // Test 2: Truncated state file (contains only 1 byte, but we expect 4 chunks)
         let mut ins = JobInstruction::new(m);
         let state_file = dir.path().join("truncated.state");
-        std::fs::write(&state_file, &[0b0000_0001]).unwrap(); // Lsb0 order: bit 0 is true, others false
+        std::fs::write(&state_file, [0b0000_0001]).unwrap(); // Lsb0 order: bit 0 is true, others false
         let final_file = dir.path().join("truncated.final");
         ins.load_state_from_disk(&state_file, &final_file, false)
             .unwrap();
