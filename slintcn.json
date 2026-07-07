@@ -1,0 +1,10 @@
+{
+  "$schema": "https://slintcn.dev/schema/slintcn.json",
+  "style": "default",
+  "baseColor": "neutral",
+  "outDir": "crates/gui/ui/slintcn",
+  "themeDir": "crates/gui/ui/slintcn/theme",
+  "componentsDir": "crates/gui/ui/slintcn/components",
+  "blocksDir": "crates/gui/ui/slintcn/blocks",
+  "registries": {}
+}

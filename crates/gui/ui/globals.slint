@@ -1,22 +1,49 @@
-import { Device, Transfer } from "types.slint";
+import { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest } from "types.slint";
 
 export global Theme {
-    out property <color> background: #1a1b26;
-    out property <color> surface: #24283b;
-    out property <color> surface-hover: #292e42;
-    out property <color> primary: #f7768e;      // Sakura Pink
-    out property <color> secondary: #7dcfff;    // Neo-Cyan
-    out property <color> success: #9ece6a;      // Matcha Green
-    out property <color> text-primary: #c0caf5;  // Primary text
-    out property <color> text-secondary: #565f89; // Dimmed text
-    out property <color> text-dark: #1a1b26;     // Dark text for light badges
+    in-out property <bool> is_dark: true;
+
+    // Colors (Japanese Dark/Light Themes)
+    out property <color> background: is_dark ? #121212 : #fcfbf7;      // Sumi dark / Washi light
+    out property <color> surface: is_dark ? #1c1c1c : #f5f2e9;         // Stone / Aged paper
+    out property <color> surface-hover: is_dark ? #262626 : #eadecb;
+    out property <color> primary: #c9463c;                             // Shu-iro Vermillion
+    out property <color> secondary: #c9a84c;                           // Muted Gold
+    out property <color> success: #7ba05b;                             // Muted Matcha
+    out property <color> error: #c9463c;
+    out property <color> warning: #c9a84c;
+    out property <color> info: #5b8ba0;                                // Muted Indigo
+    
+    out property <color> text-primary: is_dark ? #e8e3d8 : #1c1c1c;
+    out property <color> text-secondary: is_dark ? #7a7570 : #8a837a;
+    out property <color> text-dark: #121212;
+
+    // Spacing scale
+    out property <length> spacing-xs: 4px;
+    out property <length> spacing-sm: 8px;
+    out property <length> spacing-md: 12px;
+    out property <length> spacing-lg: 16px;
+    out property <length> spacing-xl: 24px;
+
+    // Typography scale (scaled up globally for readability)
+    out property <length> font-title: 24px;
+    out property <length> font-header: 20px;
+    out property <length> font-body: 15px;
+    out property <length> font-caption: 13px;
+    out property <length> font-small: 11px;
+
+    // Elevation / Shadows
+    out property <color> shadow-color: is_dark ? rgba(0, 0, 0, 0.5) : rgba(0, 0, 0, 0.1);
 }
 
 export global AppData {
+    in-out property <AppTab> current_tab: AppTab.send;
     in property <[Device]> devices: [];
     in property <[Transfer]> active_transfers: [];
     in property <[Transfer]> completed_transfers: [];
     in-out property <string> direct_ip: "";
+    in-out property <string> text_to_send: "";
+    in property <[ClipboardMessage]> clipboard_history: [];
 
     // Config preferences loaded from Rust
     in property <string> device_uuid: "";
@@ -29,17 +56,26 @@ export global AppData {
 
     // Consent request popup state
     in-out property <bool> has_consent_request: false;
-    in-out property <int> consent_transfer_id: 0;
-    in-out property <string> consent_peer_ip: "";
-    in-out property <string> consent_job_name: "";
+    in-out property <ConsentRequest> consent_request;
+
+    // Cancel confirmation state
+    in-out property <bool> has_cancel_confirmation: false;
+    in-out property <CancelRequest> cancel_request;
 }
 
 export global Logic {
-    callback change_tab(int);
+    callback change_tab(AppTab);
     callback direct_send_file(string);
     callback direct_send_folder(string);
     callback device_send_file(Device);
     callback device_send_folder(Device);
+    callback device_send_dropped_file(Device, data-transfer);
+    callback direct_send_dropped_file(string, data-transfer);
+    callback send_text_to_device(Device, string);
+    callback send_text_direct(string, string); // ip, text
+    callback copy_to_clipboard(string);
+    callback paste_from_clipboard() -> string;
+    callback clear_clipboard_history();
     callback cancel_transfer(int);
     callback open_transfer_folder(int);
     callback change_download_dir();
@@ -48,4 +84,10 @@ export global Logic {
     callback update_display_name(string);
     callback toggle_overwrite_dest(bool);
     callback toggle_auto_accept(bool);
+}
+
+export global ToastData {
+    in-out property <bool> show: false;
+    in-out property <string> message: "";
+    in-out property <string> toast_type: "info"; // "success", "error", "info"
 }

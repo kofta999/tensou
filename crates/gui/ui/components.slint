@@ -1,25 +1,26 @@
-import { Device } from "types.slint";
-import { Theme } from "globals.slint";
+import { Device, ClipboardMessage } from "types.slint";
+import { Theme, AppData, Logic } from "globals.slint";
 
 export component ProgressBar inherits Rectangle {
     in property <float> progress: 0.0;
     in property <bool> is_sender: true;
+    in property <length> bar_height: 18px;
 
-    height: 18px;
-    background: #16161e; // Deepest void background
-    border-radius: 9px;
+    height: bar_height;
+    background: #0a0a0a; // Deepest void background
+    border-radius: self.height / 2;
     border-width: 1px;
     border-color: Theme.surface-hover;
     clip: true;
 
-    // Dynamic progress fill with Tokyo Night colors
+    // Dynamic progress fill with Sumi-e Ink colors
     Rectangle {
         x: 0px;
         width: parent.width * progress;
         height: parent.height;
-        // Sakura Pink for sending, Matcha Green for receiving
+        // Vermillion for sending, Matcha for receiving
         background: is_sender ? Theme.primary : Theme.success;
-        border-radius: 9px;
+        border-radius: self.height / 2;
 
         animate width {
             duration: 300ms;
@@ -29,8 +30,8 @@ export component ProgressBar inherits Rectangle {
 
     Text {
         text: Math.round(progress * 100) + "%";
-        color: Theme.text-primary;
-        font-size: 11px;
+        color: #ffffff;
+        font-size: 12px;
         font-weight: 800;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -41,13 +42,13 @@ export component DeviceCard inherits Rectangle {
     in property <Device> dev;
     callback clicked();
 
-    height: 68px; // Compact height
-    background: touch.has-hover ? Theme.surface-hover : Theme.surface; // Subtle surface elevation
+    height: 78px; // Scaled up height
+    background: touch.has-hover || drop_area.has-drag ? Theme.surface-hover : Theme.surface; // Subtle surface elevation
     border-radius: 12px;
 
-    // Glowing border effect on hover
+    // Glowing border effect on hover or drag-over
     border-width: 2px;
-    border-color: touch.has-hover ? Theme.secondary : transparent;
+    border-color: touch.has-hover || drop_area.has-drag ? Theme.secondary : transparent;
 
     animate background { duration: 200ms; }
     animate border-color {
@@ -55,30 +56,51 @@ export component DeviceCard inherits Rectangle {
         easing: ease-out;
     }
 
+    // Subtle glow on hover
+    drop-shadow-color: touch.has-hover || drop_area.has-drag ? Theme.secondary.transparentize(0.85) : transparent;
+    drop-shadow-blur: touch.has-hover || drop_area.has-drag ? 16px : 0px;
+    drop-shadow-offset-y: touch.has-hover || drop_area.has-drag ? 4px : 0px;
+
+    animate drop-shadow-color { duration: 200ms; }
+    animate drop-shadow-blur { duration: 200ms; }
+    animate drop-shadow-offset-y { duration: 200ms; }
+
+    drop_area := DropArea {
+        width: 100%;
+        height: 100%;
+        can-drop(event) => {
+            return DragAction.copy;
+        }
+        dropped(event) => {
+            Logic.device_send_dropped_file(dev, event.data);
+            return DragAction.copy;
+        }
+    }
+
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        spacing: 14px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
         alignment: start;
 
         // Compact Minimalist Avatar
         Rectangle {
-            width: 40px;
-            height: 40px;
+            width: 46px;
+            height: 46px;
             background: Theme.background; // Inner void
-            border-radius: 20px;
+            border-radius: 23px;
             border-width: 2px;
-            border-color: Theme.secondary; // Cyan outline
+            border-color: dev.avatar-color; // Dynamic outline
             y: (parent.height - self.height) / 2;
 
-            // Subtle neon glow
-            drop-shadow-color: Theme.secondary.transparentize(0.6);
-            drop-shadow-blur: 8px;
+            // Subtle glow
+            drop-shadow-color: dev.avatar-color.transparentize(0.6);
+            drop-shadow-blur: 12px;
 
             Text {
                 text: dev.initials;
-                color: Theme.secondary;
-                font-size: 16px;
+                color: dev.avatar-color;
+                font-size: 18px; // Scaled up
                 font-weight: 800;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -87,24 +109,24 @@ export component DeviceCard inherits Rectangle {
 
         VerticalLayout {
             alignment: center;
-            spacing: 2px;
+            spacing: 3px;
             HorizontalLayout {
-                spacing: 6px;
+                spacing: 8px;
                 alignment: start;
 
                 Text {
                     text: dev.display_name;
-                    color: touch.has-hover ? #ffffff : Theme.text-primary;
+                    color: touch.has-hover || drop_area.has-drag ? (Theme.is_dark ? #ffffff : Theme.text-primary) : Theme.text-primary;
                     font-weight: 800;
-                    font-size: 16px;
+                    font-size: 18px; // Scaled up
                     animate color { duration: 200ms; }
                 }
 
                 Image {
                     source: dev.os_type == "linux" ? @image-url("icons/linux.svg") : (dev.os_type == "windows" ? @image-url("icons/windows.svg") : (dev.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg")));
-                    width: 16px;
-                    height: 16px;
-                    colorize: touch.has-hover ? #ffffff : Theme.text-secondary;
+                    width: 20px; // Scaled up
+                    height: 20px; // Scaled up
+                    colorize: touch.has-hover || drop_area.has-drag ? (Theme.is_dark ? #ffffff : Theme.text-secondary) : Theme.text-secondary;
                     y: (parent.height - self.height) / 2;
                     animate colorize { duration: 200ms; }
                 }
@@ -113,7 +135,7 @@ export component DeviceCard inherits Rectangle {
             Text {
                 text: dev.ip + ":" + dev.port;
                 color: Theme.text-secondary; // Dimmed text
-                font-size: 12px;
+                font-size: 13px; // Scaled up
                 font-weight: 500;
             }
         }
@@ -140,7 +162,7 @@ export component TabButton inherits Rectangle {
 
         Text {
             text: root.text;
-            // Sakura pink for active, muted slate for inactive
+            // Vermillion for active, muted warm grey for inactive
             color: active ? Theme.primary : (touch.has-hover ? Theme.text-primary : Theme.text-secondary);
             font-weight: active ? 800 : 600;
             font-size: 15px;
@@ -175,27 +197,40 @@ export component TabButton inherits Rectangle {
 export component ZenButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
+    in property <image> icon: @image-url("");
+    in property <bool> has_icon: false;
     callback clicked();
 
     height: 44px;
-    background: primary ? (touch.has-hover ? Theme.primary.mix(#ffffff, 20%) : @linear-gradient(135deg, Theme.primary 0%, Theme.primary.darker(0.3) 100%)) : (touch.has-hover ? Theme.surface-hover : Theme.surface);
+    background: primary ? (touch.has-hover ? Theme.primary.mix(#ffffff, 20%) : Theme.primary) : (touch.has-hover ? Theme.surface-hover : Theme.surface);
 
-    // Sharp corners by default, rounded on hover
     border-radius: 8px;
     border-width: primary ? 0px : 1px;
     border-color: primary ? transparent : (touch.has-hover ? Theme.secondary : Theme.surface-hover);
+    clip: true;
 
     animate background { duration: 150ms; }
     animate border-color { duration: 150ms; }
-    animate border-radius { duration: 150ms; }
 
-    Text {
-        text: root.text;
-        color: primary ? Theme.text-dark : Theme.text-primary;
-        font-weight: 800;
-        font-size: 14px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+
+        if has_icon : Image {
+            source: icon;
+            width: 16px;
+            height: 16px;
+            colorize: primary ? Theme.text-dark : Theme.text-primary;
+            y: (parent.height - self.height) / 2;
+        }
+
+        Text {
+            text: root.text;
+            color: primary ? Theme.text-dark : Theme.text-primary;
+            font-weight: 800;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
     }
 
     touch := TouchArea {
@@ -239,6 +274,174 @@ export component ZenToggle inherits Rectangle {
         clicked => {
             checked = !checked;
             toggled(checked);
+        }
+    }
+}
+
+export component SettingsMenuRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <image> icon: @image-url("");
+    in property <bool> has_icon: false;
+    callback clicked();
+
+    height: 64px;
+    background: touch.has-hover ? Theme.surface-hover : Theme.background;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.surface-hover;
+
+    animate background { duration: 150ms; }
+
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 12px;
+        alignment: start;
+
+        if has_icon : Rectangle {
+            width: 32px;
+            height: 32px;
+            background: Theme.surface-hover;
+            border-radius: 6px;
+            y: (parent.height - self.height) / 2;
+
+            Image {
+                source: icon;
+                width: 16px;
+                height: 16px;
+                colorize: Theme.secondary;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text-primary;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            Text {
+                text: root.subtitle;
+                color: Theme.text-secondary;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: "›";
+            color: Theme.text-secondary;
+            font-size: 22px;
+            font-weight: 800;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ClipboardEntryCard inherits Rectangle {
+    in property <ClipboardMessage> msg;
+    callback copy_clicked();
+
+    background: Theme.background;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.surface-hover;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: msg.sender_name + " · " + msg.received_at;
+                color: Theme.text-secondary;
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            ZenButton {
+                text: "Copy";
+                width: 64px;
+                height: 26px;
+                clicked => { root.copy_clicked(); }
+            }
+        }
+
+        Text {
+            text: msg.content;
+            color: Theme.text-primary;
+            font-size: 13px;
+            font-weight: 500;
+            wrap: word-wrap;
+            overflow: elide;
+            max-height: 60px;
+        }
+    }
+}
+
+export component ZenLineEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    callback edited(string);
+    callback accepted();
+
+    height: 38px;
+    background: Theme.background;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: input_focus.has-focus ? Theme.secondary : Theme.surface-hover;
+    
+    animate border-color { duration: 150ms; }
+
+    input_focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        
+        TextInput {
+            x: 10px;
+            y: (parent.height - self.height) / 2;
+            width: parent.width - 20px;
+            text <=> root.text;
+            color: Theme.text-primary;
+            font-size: 14px;
+            single-line: true;
+            edited => {
+                root.edited(self.text);
+            }
+            accepted => {
+                root.accepted();
+            }
+        }
+    }
+
+    // Placeholder
+    if root.text == "" : Text {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        text: root.placeholder;
+        color: Theme.text-secondary.transparentize(0.45); // shadow-y placeholder
+        font-size: 14px;
+    }
+
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => {
+            input_focus.focus();
         }
     }
 }

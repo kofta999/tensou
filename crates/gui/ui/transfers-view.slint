@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
-import { Transfer } from "types.slint";
-import { ProgressBar, ZenButton } from "components.slint";
+import { Transfer, AppTab } from "types.slint";
+import { ProgressBar, ZenButton, ClipboardEntryCard } from "components.slint";
 import { Theme, AppData, Logic } from "globals.slint";
 
 export component TransfersView inherits VerticalLayout {
@@ -8,34 +8,103 @@ export component TransfersView inherits VerticalLayout {
     spacing: 16px;
 
     ScrollView {
+        vertical-stretch: 1;
         VerticalLayout {
+            alignment: start;
             spacing: 24px;
 
             // Active Transfers Section
             VerticalLayout {
                 spacing: 12px;
-                
-                Text {
-                    text: "Active Transfers (" + AppData.active_transfers.length + ")";
-                    font-size: 16px;
-                    font-weight: 800;
-                    color: Theme.text-primary;
-                }
 
-                if AppData.active_transfers.length == 0 : VerticalLayout {
-                    alignment: center;
-                    height: 100px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
                     Text {
-                        text: "No active file transfers.";
-                        color: Theme.text-secondary;
-                        horizontal-alignment: center;
-                        font-size: 14px;
+                        text: "Active Transfers";
+                        font-size: 15px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+
+                    if AppData.active_transfers.length > 0: Rectangle {
+                        background: Theme.primary;
+                        border-radius: 9px;
+                        height: 18px;
+                        width: active_badge_text.preferred-width + 12px;
+                        y: (parent.height - self.height) / 2;
+
+                        active_badge_text := Text {
+                            text: AppData.active_transfers.length;
+                            color: Theme.text-dark;
+                            font-size: 11px;
+                            font-weight: 800;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 
-                if AppData.active_transfers.length > 0 : VerticalLayout {
+                if AppData.active_transfers.length == 0: VerticalLayout {
                     spacing: 12px;
-                    for transfer in AppData.active_transfers : Rectangle {
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+
+                    // Styled minimalist transfer icon placeholder
+                    Rectangle {
+                        width: 44px;
+                        height: 44px;
+                        background: Theme.surface-hover;
+                        border-radius: 22px;
+                        border-width: 1px;
+                        border-color: Theme.secondary;
+                        x: (parent.width - self.width) / 2;
+
+                        Image {
+                            source: @image-url("icons/file.svg");
+                            width: 20px;
+                            height: 20px;
+                            colorize: Theme.secondary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        Text {
+                            text: "No Active Transfers";
+                            color: Theme.text-primary;
+                            horizontal-alignment: center;
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+
+                        Text {
+                            text: "Your active file transfers will appear here.";
+                            color: Theme.text-secondary;
+                            horizontal-alignment: center;
+                            font-size: 11px;
+                        }
+                    }
+
+                    ZenButton {
+                        text: "Send a File";
+                        primary: false;
+                        width: 120px;
+                        height: 32px;
+                        x: (parent.width - self.width) / 2;
+                        clicked => {
+                            AppData.current_tab = AppTab.send; // Go to Send tab
+                        }
+                    }
+                }
+
+                if AppData.active_transfers.length > 0: VerticalLayout {
+                    spacing: 12px;
+                    for transfer in AppData.active_transfers: Rectangle {
                         background: Theme.background;
                         border-radius: 12px;
                         border-width: 1px;
@@ -43,16 +112,16 @@ export component TransfersView inherits VerticalLayout {
 
                         VerticalLayout {
                             padding: 16px;
-                            spacing: 12px;
+                            spacing: 10px;
 
                             HorizontalLayout {
                                 alignment: space-between;
                                 Text {
                                     text: (transfer.is_sender ? "Sending: " : "Receiving: ") + transfer.job_name;
-                                    color: #ffffff;
+                                    color: Theme.text-primary;
                                     font-weight: 800;
                                     font-size: 14px;
-                                    width: 200px;
+                                    width: 190px;
                                     overflow: elide;
                                 }
 
@@ -61,30 +130,39 @@ export component TransfersView inherits VerticalLayout {
                                     width: 72px;
                                     height: 32px;
                                     clicked => {
-                                        Logic.cancel_transfer(transfer.id);
+                                        AppData.cancel_request = { transfer_id: transfer.id, job_name: transfer.job_name };
+                                        AppData.has_cancel_confirmation = true;
                                     }
                                 }
                             }
 
-                            ProgressBar {
-                                progress: transfer.progress;
-                                is_sender: transfer.is_sender;
-                            }
-
+                            // Speed / ETA promoted to a bold, prominent line
                             HorizontalLayout {
                                 alignment: space-between;
+                                Text {
+                                    text: transfer.speed_eta;
+                                    color: Theme.secondary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+
                                 Text {
                                     text: transfer.bytes_transferred + " / " + transfer.total_bytes;
                                     color: Theme.text-secondary;
                                     font-size: 12px;
                                     font-weight: 600;
+                                    vertical-alignment: center;
                                 }
+                            }
 
-                                Text {
-                                    text: transfer.speed_eta;
-                                    color: Theme.text-secondary;
-                                    font-size: 12px;
-                                    font-weight: 600;
+                            // Sized progress bar
+                            HorizontalLayout {
+                                padding-left: 20px;
+                                padding-right: 20px;
+                                ProgressBar {
+                                    progress: transfer.progress;
+                                    is_sender: transfer.is_sender;
+                                    bar_height: 24px;
                                 }
                             }
                         }
@@ -93,19 +171,42 @@ export component TransfersView inherits VerticalLayout {
             }
 
             // Completed Transfers Section
-            if AppData.completed_transfers.length > 0 : VerticalLayout {
+            if AppData.completed_transfers.length > 0: VerticalLayout {
                 spacing: 12px;
 
-                Text {
-                    text: "Session History (" + AppData.completed_transfers.length + ")";
-                    font-size: 16px;
-                    font-weight: 800;
-                    color: Theme.text-primary;
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: "Session History";
+                        font-size: 15px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        background: Theme.surface-hover;
+                        border-radius: 9px;
+                        height: 18px;
+                        width: history_badge_text.preferred-width + 12px;
+                        y: (parent.height - self.height) / 2;
+
+                        history_badge_text := Text {
+                            text: AppData.completed_transfers.length;
+                            color: Theme.text-secondary;
+                            font-size: 11px;
+                            font-weight: 800;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
 
                 VerticalLayout {
                     spacing: 12px;
-                    for transfer in AppData.completed_transfers : Rectangle {
+                    for transfer in AppData.completed_transfers: Rectangle {
                         background: Theme.background;
                         border-radius: 12px;
                         border-width: 1px;
@@ -119,7 +220,7 @@ export component TransfersView inherits VerticalLayout {
                                 alignment: space-between;
                                 Text {
                                     text: (transfer.is_sender ? "Sent: " : "Received: ") + transfer.job_name;
-                                    color: Theme.success;
+                                    color: transfer.is_sender ? Theme.primary : Theme.success;
                                     font-weight: 800;
                                     font-size: 14px;
                                     width: 200px;
@@ -152,6 +253,70 @@ export component TransfersView inherits VerticalLayout {
                                     font-weight: 600;
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Received Text Section (Received This Session)
+            VerticalLayout {
+                spacing: 12px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        Text {
+                            text: "Received Text / Clipboard";
+                            font-size: 15px;
+                            font-weight: 800;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+
+                        if AppData.clipboard_history.length > 0: Rectangle {
+                            background: Theme.secondary;
+                            border-radius: 9px;
+                            height: 18px;
+                            width: clipboard_badge_text.preferred-width + 12px;
+                            y: (parent.height - self.height) / 2;
+
+                            clipboard_badge_text := Text {
+                                text: AppData.clipboard_history.length;
+                                color: Theme.text-dark;
+                                font-size: 11px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    if AppData.clipboard_history.length > 0: ZenButton {
+                        text: "Clear";
+                        width: 70px;
+                        height: 28px;
+                        clicked => {
+                            Logic.clear_clipboard_history();
+                        }
+                    }
+                }
+
+                if AppData.clipboard_history.length == 0: Text {
+                    text: "No text or clipboard content received yet.";
+                    color: Theme.text-secondary;
+                    font-size: 13px;
+                }
+
+                if AppData.clipboard_history.length > 0: VerticalLayout {
+                    spacing: 8px;
+                    for msg in AppData.clipboard_history: ClipboardEntryCard {
+                        msg: msg;
+                        copy_clicked => {
+                            Logic.copy_to_clipboard(msg.content);
                         }
                     }
                 }

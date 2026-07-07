@@ -1,26 +1,16 @@
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { ZenButton, ZenToggle } from "components.slint";
+import { Input } from "slintcn/components/input.slint";
 import { Theme, AppData, Logic } from "globals.slint";
 
-export component SettingsView inherits ScrollView {
-    Rectangle {
-        height: layout.preferred-height;
-        background: transparent;
-
-        dummy_focus := FocusScope { }
-
-        // Background click-away handler to clear focus from LineEdit
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => {
-                dummy_focus.focus();
-            }
-        }
-
-        layout := VerticalLayout {
+export component SettingsView inherits Rectangle {
+    ScrollView {
+        vertical-stretch: 1;
+        
+        VerticalLayout {
             padding: 24px;
-            spacing: 18px;
+            spacing: 24px;
+            alignment: start;
 
             Text {
                 text: "Application Settings";
@@ -31,24 +21,36 @@ export component SettingsView inherits ScrollView {
 
             // Section 1: Device Identity
             VerticalLayout {
-                spacing: 10px;
-
-                Text {
-                    text: "Device Identity";
-                    color: Theme.text-secondary;
-                    font-size: 13px;
-                    font-weight: 700;
+                spacing: 12px;
+                
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Image {
+                        source: @image-url("icons/user.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: Theme.text-secondary;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    Text {
+                        text: "Device Identity";
+                        font-size: 14px;
+                        font-weight: 700;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Rectangle {
-                    background: Theme.background;
+                    background: Theme.surface;
                     border-radius: 12px;
                     border-width: 1px;
                     border-color: Theme.surface-hover;
 
                     VerticalLayout {
                         padding: 16px;
-                        spacing: 12px;
+                        spacing: 16px;
 
                         HorizontalLayout {
                             spacing: 12px;
@@ -64,6 +66,7 @@ export component SettingsView inherits ScrollView {
 
                             VerticalLayout {
                                 alignment: center;
+                                spacing: 4px;
                                 Text {
                                     text: "Display Name (edit to rename)";
                                     color: Theme.text-secondary;
@@ -71,9 +74,9 @@ export component SettingsView inherits ScrollView {
                                     font-weight: 600;
                                 }
 
-                                name_input := LineEdit {
+                                Input {
                                     text: AppData.display_name;
-                                    placeholder-text: "Device Name";
+                                    placeholder: "Device Name";
                                     edited(text) => {
                                         AppData.display_name = text;
                                         Logic.update_display_name(text);
@@ -82,7 +85,6 @@ export component SettingsView inherits ScrollView {
                             }
                         }
 
-                        // UUID badge
                         VerticalLayout {
                             spacing: 4px;
                             Text {
@@ -103,125 +105,256 @@ export component SettingsView inherits ScrollView {
                 }
             }
 
-            // Section 2: Save Location
+            // Section 2: Network & Transfers
             VerticalLayout {
-                spacing: 10px;
-                Text {
-                    text: "Download Location";
-                    color: Theme.text-secondary;
-                    font-size: 13px;
-                    font-weight: 700;
+                spacing: 12px;
+                
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Image {
+                        source: @image-url("icons/network.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: Theme.text-secondary;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    Text {
+                        text: "Network & Transfers";
+                        font-size: 14px;
+                        font-weight: 700;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Rectangle {
-                    background: Theme.background;
+                    background: Theme.surface;
                     border-radius: 12px;
                     border-width: 1px;
                     border-color: Theme.surface-hover;
 
                     VerticalLayout {
-                        padding: 14px;
-                        Text {
-                            text: AppData.download_dir;
-                            color: #ffffff;
-                            font-weight: 700;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
+                        padding: 16px;
+                        spacing: 16px;
 
-                ZenButton {
-                    text: "📁 Change Location";
-                    primary: false;
-                    clicked => {
-                        Logic.change_download_dir();
+                        HorizontalLayout {
+                            alignment: space-between;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: "Overwrite Existing Files";
+                                    color: Theme.text-primary;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: "Replace local files if they have the same name";
+                                    color: Theme.text-secondary;
+                                    font-size: 11px;
+                                }
+                            }
+
+                            ZenToggle {
+                                checked: AppData.overwrite_dest;
+                                toggled(val) => {
+                                    AppData.overwrite_dest = val;
+                                    Logic.toggle_overwrite_dest(val);
+                                }
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.surface-hover;
+                        }
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: "Auto Accept Requests";
+                                    color: Theme.text-primary;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: "Auto accept all incoming requests (use with caution)";
+                                    color: Theme.text-secondary;
+                                    font-size: 11px;
+                                }
+                            }
+
+                            ZenToggle {
+                                checked: AppData.auto_accept;
+                                toggled(val) => {
+                                    AppData.auto_accept = val;
+                                    Logic.toggle_auto_accept(val);
+                                }
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.surface-hover;
+                        }
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "Listening Network Port";
+                                color: Theme.text-primary;
+                                font-size: 13px;
+                                font-weight: 600;
+                            }
+
+                            Text {
+                                text: AppData.listen_port;
+                                color: Theme.secondary;
+                                font-weight: 800;
+                                font-size: 13px;
+                            }
+                        }
                     }
                 }
             }
 
-            // Section 3: Preferences & Port
+            // Section 3: Storage
             VerticalLayout {
                 spacing: 12px;
-
-                Rectangle {
-                    height: 1px;
-                    background: Theme.surface-hover;
-                }
-
+                
                 HorizontalLayout {
-                    alignment: space-between;
-                    VerticalLayout {
-                        alignment: center;
-                        Text {
-                            text: "Overwrite Existing Files";
-                            color: Theme.text-primary;
-                            font-size: 14px;
-                            font-weight: 600;
-                        }
-
-                        Text {
-                            text: "Replace local files if they have the same name";
-                            color: Theme.text-secondary;
-                            font-size: 11px;
-                        }
-                    }
-
-                    ZenToggle {
-                        checked: AppData.overwrite_dest;
-                        toggled(val) => {
-                            AppData.overwrite_dest = val;
-                            Logic.toggle_overwrite_dest(val);
-                        }
+                    spacing: 8px;
+                    alignment: start;
+                    Image {
+                        source: @image-url("icons/harddrive.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: Theme.text-secondary;
                         y: (parent.height - self.height) / 2;
                     }
-                }
-
-                HorizontalLayout {
-                    VerticalLayout {
-                        alignment: center;
-                        Text {
-                            text: "Auto Accept Requests";
-                            color: Theme.text-primary;
-                            font-size: 14px;
-                            font-weight: 600;
-                        }
-
-                        Text {
-                            text: "Auto accept all incoming requests (use with caution)";
-                            color: Theme.text-secondary;
-                            font-size: 11px;
-                        }
-                    }
-
-                    ZenToggle {
-                        checked: AppData.auto_accept;
-                        toggled(val) => {
-                            AppData.auto_accept = val;
-                            Logic.toggle_auto_accept(val);
-                        }
-                        y: (parent.height - self.height) / 2;
-                    }
-                }
-
-                Rectangle {
-                    height: 1px;
-                    background: Theme.surface-hover;
-                }
-
-                HorizontalLayout {
-                    alignment: space-between;
                     Text {
-                        text: "Listening Network Port";
+                        text: "Storage";
+                        font-size: 14px;
+                        font-weight: 700;
                         color: Theme.text-secondary;
-                        font-size: 14px;
-                        font-weight: 600;
+                        vertical-alignment: center;
                     }
+                }
 
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.surface-hover;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
+
+                        Text {
+                            text: "Download Location";
+                            color: Theme.text-secondary;
+                            font-size: 11px;
+                            font-weight: 600;
+                        }
+
+                        Rectangle {
+                            background: Theme.background;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: Theme.surface-hover;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                Text {
+                                    text: AppData.download_dir;
+                                    color: Theme.text-primary;
+                                    font-weight: 700;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+
+                        ZenButton {
+                            text: "📁 Change Location";
+                            primary: false;
+                            height: 36px;
+                            clicked => {
+                                Logic.change_download_dir();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Section 4: Theme Appearance
+            VerticalLayout {
+                spacing: 12px;
+                
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Image {
+                        source: @image-url("icons/moon.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: Theme.text-secondary;
+                        y: (parent.height - self.height) / 2;
+                    }
                     Text {
-                        text: AppData.listen_port;
-                        color: Theme.secondary;
-                        font-weight: 800;
+                        text: "Appearance";
                         font-size: 14px;
+                        font-weight: 700;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.surface-hover;
+
+                    VerticalLayout {
+                        padding: 16px;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: "Color Theme";
+                                    color: Theme.text-primary;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: Theme.is_dark ? "Dark Theme (Sumi-e)" : "Light Theme (Washi)";
+                                    color: Theme.text-secondary;
+                                    font-size: 11px;
+                                }
+                            }
+
+                            ZenToggle {
+                                checked: Theme.is_dark;
+                                toggled(val) => {
+                                    Theme.is_dark = val;
+                                }
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
                     }
                 }
             }

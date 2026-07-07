@@ -185,6 +185,64 @@ pub fn setup(
                 let _ = open::that(&t.local_dir);
             }
         });
+
+    // Device Send Dropped File (No-op stub for now)
+    main_window.global::<Logic>().on_device_send_dropped_file({
+        move |_dev, _data_transfer| {
+            dbg!(_dev, _data_transfer);
+            // No-op
+        }
+    });
+
+    // Direct Send Dropped File (No-op stub for now)
+    main_window.global::<Logic>().on_direct_send_dropped_file({
+        move |_ip, _data_transfer| {
+            // No-op
+        }
+    });
+
+    // Send Text to Device (Stub)
+    main_window.global::<Logic>().on_send_text_to_device({
+        move |dev, text| {
+            log::info!("Send text to device ({}): {}", dev.display_name, text);
+            // User will wire up backend text protocol
+        }
+    });
+
+    // Send Text Direct (Stub)
+    main_window.global::<Logic>().on_send_text_direct({
+        move |ip_str, text| {
+            log::info!("Send text direct to {}: {}", ip_str, text);
+            // User will wire up backend text protocol
+        }
+    });
+
+    // Copy to Clipboard
+    main_window.global::<Logic>().on_copy_to_clipboard(move |text| {
+        if let Ok(mut ctx) = arboard::Clipboard::new() {
+            let _ = ctx.set_text(text.to_string());
+        }
+    });
+
+    // Paste from Clipboard
+    main_window.global::<Logic>().on_paste_from_clipboard(move || {
+        if let Ok(mut ctx) = arboard::Clipboard::new() {
+            ctx.get_text().unwrap_or_default().into()
+        } else {
+            "".into()
+        }
+    });
+
+    // Clear Clipboard History
+    main_window.global::<Logic>().on_clear_clipboard_history({
+        let main_window_weak = main_window.as_weak();
+        move || {
+            if let Some(ui) = main_window_weak.upgrade() {
+                let empty_model = std::rc::Rc::new(slint::VecModel::default());
+                ui.global::<AppData>().set_clipboard_history(empty_model.into());
+            }
+        }
+    });
 }
 
 fn send_file_background(
