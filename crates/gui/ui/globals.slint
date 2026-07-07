@@ -25,6 +25,7 @@ export global AppData {
     in property <string> download_dir: "";
     in-out property <bool> overwrite_dest: false;
     in property <int> listen_port: 6967;
+    in-out property <bool> auto_accept: false;
 
     // Consent request popup state
     in-out property <bool> has_consent_request: false;
@@ -46,4 +47,5 @@ export global Logic {
     callback direct_ip_changed(string);
     callback update_display_name(string);
     callback toggle_overwrite_dest(bool);
+    callback toggle_auto_accept(bool);
 }

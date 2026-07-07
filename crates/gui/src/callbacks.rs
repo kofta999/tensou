@@ -134,6 +134,16 @@ pub fn setup(
         }
     });
 
+    // Toggle Auto Accept
+    main_window.global::<Logic>().on_toggle_auto_accept({
+        let config = config.clone();
+        move |val| {
+            let mut cfg = config.lock().unwrap();
+            cfg.auto_accept = val;
+            let _ = cfg.save();
+        }
+    });
+
     // Consent Response
     main_window.global::<Logic>().on_consent_response({
         let consent_registry = consent_registry.clone();

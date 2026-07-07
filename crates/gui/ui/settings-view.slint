@@ -176,6 +176,33 @@ export component SettingsView inherits ScrollView {
                     }
                 }
 
+                HorizontalLayout {
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Auto Accept Requests";
+                            color: Theme.text-primary;
+                            font-size: 14px;
+                            font-weight: 600;
+                        }
+
+                        Text {
+                            text: "Auto accept all incoming requests (use with caution)";
+                            color: Theme.text-secondary;
+                            font-size: 11px;
+                        }
+                    }
+
+                    ZenToggle {
+                        checked: AppData.auto_accept;
+                        toggled(val) => {
+                            AppData.auto_accept = val;
+                            Logic.toggle_auto_accept(val);
+                        }
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+
                 Rectangle {
                     height: 1px;
                     background: Theme.surface-hover;

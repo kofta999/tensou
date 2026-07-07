@@ -102,10 +102,18 @@ impl ReceiverDaemon {
                     .await
                     {
                         Ok(Ok(pending)) => {
+                            let auto_accept = {
+                                let config = config_clone.lock().unwrap();
+                                config.auto_accept
+                            };
 
-                            let is_accepted = consent_clone
-                                .request_consent(peer, &pending.manifest.job_name)
-                                .await;
+                            let is_accepted = if auto_accept {
+                                true
+                            } else {
+                                consent_clone
+                                    .request_consent(peer, &pending.manifest.job_name)
+                                    .await
+                            };
 
                              if is_accepted {
                                 let overwrite = {
