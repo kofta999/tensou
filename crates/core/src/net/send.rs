@@ -5,7 +5,12 @@ use crate::{
     protocol::{ManifestManager, State, TransferObserver},
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
-use std::{collections::HashMap, net::SocketAddr, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
@@ -17,14 +22,24 @@ pub struct Sender {
     pub cancel_token: CancellationToken,
 }
 
+#[derive(Debug)]
+pub enum SendType<'a> {
+    Single(&'a Path),
+    Multiple(&'a [PathBuf]),
+}
+
 impl Sender {
     pub async fn connect(
         server_addr: SocketAddr,
-        path: &Path,
+        send_type: SendType<'_>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
-        log::info!("Preparing transfer manifest for: {}", path.display());
-        let (manifest, sessions) = ManifestManager::build(path)?;
+        log::info!("Preparing transfer manifest for: {:?}", send_type);
+
+        let (manifest, sessions) = match send_type {
+            SendType::Single(path) => ManifestManager::build(path)?,
+            SendType::Multiple(paths) => ManifestManager::build_multiple(paths)?,
+        };
 
         let client_cfg = Self::configure_client()?;
         let bind_addr: SocketAddr = "0.0.0.0:0".parse()?;

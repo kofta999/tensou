@@ -2,6 +2,7 @@ mod recv;
 mod send;
 pub use recv::Receiver;
 pub use recv::ReceiverDaemon;
+pub use send::SendType;
 pub use send::Sender;
 
 #[cfg(test)]
@@ -86,7 +87,12 @@ mod tests {
         )
         .await;
 
-        let client = Sender::connect(addr, &source_path, CancellationToken::new()).await?;
+        let client = Sender::connect(
+            addr,
+            SendType::Single(&source_path),
+            CancellationToken::new(),
+        )
+        .await?;
         client.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -128,12 +134,21 @@ mod tests {
         )
         .await;
 
-        let client_1 = Sender::connect(addr, &source_path_1, CancellationToken::new()).await?;
+        let client_1 = Sender::connect(
+            addr,
+            SendType::Single(&source_path_1),
+            CancellationToken::new(),
+        )
+        .await?;
         client_1.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let client_2 =
-            Sender::connect(addr, &source_path_2_named_same, CancellationToken::new()).await?;
+        let client_2 = Sender::connect(
+            addr,
+            SendType::Single(&source_path_2_named_same),
+            CancellationToken::new(),
+        )
+        .await?;
         client_2.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -167,7 +182,12 @@ mod tests {
         )
         .await;
 
-        let result = Sender::connect(addr, &source_path, CancellationToken::new()).await;
+        let result = Sender::connect(
+            addr,
+            SendType::Single(&source_path),
+            CancellationToken::new(),
+        )
+        .await;
 
         assert!(result.is_err(), "Sender should receive a rejection error");
         assert!(result.unwrap_err().to_string().contains("rejected"));
@@ -198,7 +218,8 @@ mod tests {
         )
         .await;
 
-        let client = Sender::connect(addr, &job_dir, CancellationToken::new()).await?;
+        let client =
+            Sender::connect(addr, SendType::Single(&job_dir), CancellationToken::new()).await?;
         client.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -241,7 +262,7 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
-        let client = Sender::connect(addr, &source_path, cancel.clone()).await?;
+        let client = Sender::connect(addr, SendType::Single(&source_path), cancel.clone()).await?;
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -288,7 +309,12 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let client = Sender::connect(addr, &source_path, CancellationToken::new()).await?;
+        let client = Sender::connect(
+            addr,
+            SendType::Single(&source_path),
+            CancellationToken::new(),
+        )
+        .await?;
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -334,7 +360,12 @@ mod tests {
         .await;
 
         let start = std::time::Instant::now();
-        let client = Sender::connect(addr, &source_folder, CancellationToken::new()).await?;
+        let client = Sender::connect(
+            addr,
+            SendType::Single(&source_folder),
+            CancellationToken::new(),
+        )
+        .await?;
         client.process_chunks(Arc::new(TestObserver {})).await?;
         let elapsed = start.elapsed();
 

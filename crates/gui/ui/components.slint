@@ -216,7 +216,7 @@ export component ZenButton inherits Rectangle {
         alignment: center;
         spacing: 8px;
 
-        if has_icon : Image {
+        if has_icon: Image {
             source: icon;
             width: 16px;
             height: 16px;
@@ -298,7 +298,7 @@ export component SettingsMenuRow inherits Rectangle {
         spacing: 12px;
         alignment: start;
 
-        if has_icon : Rectangle {
+        if has_icon: Rectangle {
             width: 32px;
             height: 32px;
             background: Theme.surface-hover;
@@ -325,6 +325,7 @@ export component SettingsMenuRow inherits Rectangle {
                 font-size: 15px;
                 font-weight: 700;
             }
+
             Text {
                 text: root.subtitle;
                 color: Theme.text-secondary;
@@ -376,7 +377,9 @@ export component ClipboardEntryCard inherits Rectangle {
                 text: "Copy";
                 width: 64px;
                 height: 26px;
-                clicked => { root.copy_clicked(); }
+                clicked => {
+                    root.copy_clicked();
+                }
             }
         }
 
@@ -404,13 +407,13 @@ export component ZenLineEdit inherits Rectangle {
     border-radius: 8px;
     border-width: 1px;
     border-color: input_focus.has-focus ? Theme.secondary : Theme.surface-hover;
-    
+
     animate border-color { duration: 150ms; }
 
     input_focus := FocusScope {
         width: 100%;
         height: 100%;
-        
+
         TextInput {
             x: 10px;
             y: (parent.height - self.height) / 2;
@@ -429,7 +432,7 @@ export component ZenLineEdit inherits Rectangle {
     }
 
     // Placeholder
-    if root.text == "" : Text {
+    if root.text == "": Text {
         x: 12px;
         y: (parent.height - self.height) / 2;
         text: root.placeholder;

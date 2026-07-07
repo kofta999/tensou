@@ -263,16 +263,8 @@ impl PendingTransfer {
         cancel_token: CancellationToken,
         overwrite: bool,
     ) -> anyhow::Result<Receiver> {
-        let is_single_file =
-            self.manifest.files.len() == 1 && self.manifest.files[0].relative_path.is_empty();
-
-        let staging = Arc::new(TransferStaging::new(
-            target_dir.to_path_buf(),
-            &self.manifest.job_name,
-            overwrite,
-            is_single_file,
-        ));
-        let job_name = staging.job_name().to_string();
+        let staging = Arc::new(TransferStaging::new(target_dir.to_path_buf(), transfer_id));
+        let job_name = self.manifest.job_name.clone();
 
         let staging_clone = staging.clone();
         tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
