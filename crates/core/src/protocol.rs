@@ -12,7 +12,10 @@ use walkdir::WalkDir;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransferRequest {
     File(Manifest),
-    Text { device_name: String, content: String },
+    Text {
+        device_name: String,
+        content: String,
+    },
 }
 
 impl TransferRequest {

@@ -26,7 +26,10 @@ pub struct Sender {
 pub enum SendType<'a> {
     Single(&'a Path),
     Multiple(&'a [PathBuf]),
-    Text { device_name: String, content: String },
+    Text {
+        device_name: String,
+        content: String,
+    },
 }
 
 impl Sender {
@@ -46,9 +49,16 @@ impl Sender {
                 let res = ManifestManager::build_multiple(paths)?;
                 (TransferRequest::File(res.0), Some(res.1))
             }
-            SendType::Text { device_name, content } => {
-                (TransferRequest::Text { device_name, content }, None)
-            }
+            SendType::Text {
+                device_name,
+                content,
+            } => (
+                TransferRequest::Text {
+                    device_name,
+                    content,
+                },
+                None,
+            ),
         };
 
         let client_cfg = Self::configure_client()?;

@@ -336,7 +336,10 @@ impl PendingTransfer {
                     staging: staging.clone(),
                 }))
             }
-            TransferRequest::Text { device_name, content } => {
+            TransferRequest::Text {
+                device_name,
+                content,
+            } => {
                 self.send_stream.write_u8(1).await?;
                 self.send_stream.finish()?;
                 observer.on_text_received(self.connection.remote_address(), device_name, content);
