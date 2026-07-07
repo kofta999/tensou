@@ -117,7 +117,9 @@ pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result
         cancel_clone.cancel();
     });
 
-    let client = Sender::connect(selected_addr, SendType::Single(&path), cancel_token).await?;
+    let client = Sender::connect(selected_addr, SendType::Single(&path), cancel_token)
+        .await?
+        .unwrap();
     let total_bytes = client.get_remaining_bytes();
 
     let pb = create_transfer_pb(total_bytes, &display_name, true);

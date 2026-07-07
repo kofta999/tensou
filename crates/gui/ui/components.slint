@@ -362,26 +362,7 @@ export component ClipboardEntryCard inherits Rectangle {
 
     VerticalLayout {
         padding: 12px;
-        spacing: 6px;
-
-        HorizontalLayout {
-            alignment: space-between;
-            Text {
-                text: msg.sender_name + " · " + msg.received_at;
-                color: Theme.text-secondary;
-                font-size: 11px;
-                font-weight: 600;
-            }
-
-            ZenButton {
-                text: "Copy";
-                width: 64px;
-                height: 26px;
-                clicked => {
-                    root.copy_clicked();
-                }
-            }
-        }
+        spacing: 8px;
 
         Text {
             text: msg.content;
@@ -391,6 +372,19 @@ export component ClipboardEntryCard inherits Rectangle {
             wrap: word-wrap;
             overflow: elide;
             max-height: 60px;
+        }
+
+        HorizontalLayout {
+            alignment: end;
+
+            ZenButton {
+                text: "Copy";
+                width: 64px;
+                height: 26px;
+                clicked => {
+                    root.copy_clicked();
+                }
+            }
         }
     }
 }

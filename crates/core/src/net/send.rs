@@ -2,7 +2,7 @@ use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     crypto::SkipServerVerification,
     disk::SendSession,
-    protocol::{ManifestManager, State, TransferObserver},
+    protocol::{ManifestManager, State, TransferObserver, TransferRequest},
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{
@@ -26,6 +26,7 @@ pub struct Sender {
 pub enum SendType<'a> {
     Single(&'a Path),
     Multiple(&'a [PathBuf]),
+    Text { device_name: String, content: String },
 }
 
 impl Sender {
@@ -33,12 +34,21 @@ impl Sender {
         server_addr: SocketAddr,
         send_type: SendType<'_>,
         cancel_token: CancellationToken,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Option<Self>> {
         log::info!("Preparing transfer manifest for: {:?}", send_type);
 
-        let (manifest, sessions) = match send_type {
-            SendType::Single(path) => ManifestManager::build(path)?,
-            SendType::Multiple(paths) => ManifestManager::build_multiple(paths)?,
+        let (request, sessions) = match send_type {
+            SendType::Single(path) => {
+                let res = ManifestManager::build(path)?;
+                (TransferRequest::File(res.0), Some(res.1))
+            }
+            SendType::Multiple(paths) => {
+                let res = ManifestManager::build_multiple(paths)?;
+                (TransferRequest::File(res.0), Some(res.1))
+            }
+            SendType::Text { device_name, content } => {
+                (TransferRequest::Text { device_name, content }, None)
+            }
         };
 
         let client_cfg = Self::configure_client()?;
@@ -51,7 +61,7 @@ impl Sender {
         log::debug!("QUIC connection established with {}", server_addr);
 
         let (mut send, mut recv) = connection.open_bi().await?;
-        let buf = rmp_serde::to_vec(&manifest)?;
+        let buf = rmp_serde::to_vec(&request)?;
 
         log::debug!("Sending manifest metadata...");
         send.write_all(&buf).await?;
@@ -77,17 +87,22 @@ impl Sender {
             anyhow::bail!("The receiver rejected your transfer request.");
         }
 
+        let sessions = match sessions {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
         log::info!("Transfer accepted. Reading remote states...");
         let buf = recv.read_to_end(MAX_METADATA_SIZE as usize).await?;
         let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;
         log::debug!("Successfully loaded remote transfer state.");
 
-        Ok(Self {
+        Ok(Some(Self {
             connection,
             sessions,
             remote_states,
             cancel_token,
-        })
+        }))
     }
 
     pub fn get_remaining_bytes(&self) -> u64 {

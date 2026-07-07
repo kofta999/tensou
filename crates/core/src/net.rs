@@ -92,7 +92,8 @@ mod tests {
             SendType::Single(&source_path),
             CancellationToken::new(),
         )
-        .await?;
+        .await?
+        .unwrap();
         client.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -139,7 +140,8 @@ mod tests {
             SendType::Single(&source_path_1),
             CancellationToken::new(),
         )
-        .await?;
+        .await?
+        .unwrap();
         client_1.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -148,7 +150,8 @@ mod tests {
             SendType::Single(&source_path_2_named_same),
             CancellationToken::new(),
         )
-        .await?;
+        .await?
+        .unwrap();
         client_2.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -218,8 +221,9 @@ mod tests {
         )
         .await;
 
-        let client =
-            Sender::connect(addr, SendType::Single(&job_dir), CancellationToken::new()).await?;
+        let client = Sender::connect(addr, SendType::Single(&job_dir), CancellationToken::new())
+            .await?
+            .unwrap();
         client.process_chunks(Arc::new(TestObserver {})).await?;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -262,7 +266,9 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
-        let client = Sender::connect(addr, SendType::Single(&source_path), cancel.clone()).await?;
+        let client = Sender::connect(addr, SendType::Single(&source_path), cancel.clone())
+            .await?
+            .unwrap();
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -314,7 +320,8 @@ mod tests {
             SendType::Single(&source_path),
             CancellationToken::new(),
         )
-        .await?;
+        .await?
+        .unwrap();
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -365,7 +372,8 @@ mod tests {
             SendType::Single(&source_folder),
             CancellationToken::new(),
         )
-        .await?;
+        .await?
+        .unwrap();
         client.process_chunks(Arc::new(TestObserver {})).await?;
         let elapsed = start.elapsed();
 

@@ -201,19 +201,54 @@ pub fn setup(
         }
     });
 
-    // Send Text to Device (Stub)
+    // Send Text to Device
     main_window.global::<Logic>().on_send_text_to_device({
+        let config = config.clone();
         move |dev, text| {
-            log::info!("Send text to device ({}): {}", dev.display_name, text);
-            // User will wire up backend text protocol
+            if let Ok(target_addr) = format!("{}:{}", dev.ip, dev.port).parse::<SocketAddr>() {
+                let text_content = text.to_string();
+                let device_name = config.lock().unwrap().display_name.clone();
+                tokio::spawn(async move {
+                    let send_type = net::SendType::Text {
+                        device_name,
+                        content: text_content,
+                    };
+                    if let Err(e) =
+                        net::Sender::connect(target_addr, send_type, CancellationToken::new()).await
+                    {
+                        log::error!("Failed to send text to device: {e}");
+                    }
+                });
+            }
         }
     });
 
-    // Send Text Direct (Stub)
+    // Send Text Direct
     main_window.global::<Logic>().on_send_text_direct({
+        let config = config.clone();
         move |ip_str, text| {
-            log::info!("Send text direct to {}: {}", ip_str, text);
-            // User will wire up backend text protocol
+            let ip_str = ip_str.to_string();
+            let target_addr: Result<SocketAddr, _> = if ip_str.contains(':') {
+                ip_str.parse()
+            } else {
+                format!("{}:9999", ip_str).parse()
+            };
+
+            if let Ok(target_addr) = target_addr {
+                let text_content = text.to_string();
+                let device_name = config.lock().unwrap().display_name.clone();
+                tokio::spawn(async move {
+                    let send_type = net::SendType::Text {
+                        device_name,
+                        content: text_content,
+                    };
+                    if let Err(e) =
+                        net::Sender::connect(target_addr, send_type, CancellationToken::new()).await
+                    {
+                        log::error!("Failed to send text direct: {e}");
+                    }
+                });
+            }
         }
     });
 
@@ -282,7 +317,7 @@ fn send_file_background(
         )
         .await
         {
-            Ok(client) => {
+            Ok(Some(client)) => {
                 // Determine a safe base parent directory to store completed reference
                 let local_dir = paths[0]
                     .parent()
@@ -318,6 +353,7 @@ fn send_file_background(
                     }
                 }
             }
+            Ok(None) => {}
             Err(e) => {
                 let _ = tx_clone.send(GuiEvent::TransferFailed {
                     transfer_id,

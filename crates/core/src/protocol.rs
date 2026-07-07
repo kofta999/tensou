@@ -9,6 +9,21 @@ use std::{collections::HashMap, fs, net::SocketAddr, path::Path, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransferRequest {
+    File(Manifest),
+    Text { device_name: String, content: String },
+}
+
+impl TransferRequest {
+    pub fn job_name(&self) -> &str {
+        match self {
+            TransferRequest::File(manifest) => &manifest.job_name,
+            TransferRequest::Text { .. } => "Clipboard Text",
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Manifest {
     /// Purely cosmetic name for UI/Notifications (e.g. "Cargo.lock" or "export.zip and 4 other items")
@@ -389,6 +404,8 @@ pub trait TransferObserver: Send + Sync {
     fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {}
     fn on_transfer_complete(&self, _transfer_id: u32) {}
     fn on_transfer_failed(&self, _transfer_id: u32, _error: &str) {}
+    /// Called when a text/clipboard sharing event is received and accepted.
+    fn on_text_received(&self, _peer: SocketAddr, _job_name: String, _content: String) {}
 }
 
 #[async_trait]

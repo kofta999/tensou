@@ -5,8 +5,8 @@ use crate::{
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
     protocol::{
-        ChunkHeader, ChunkPacket, Manifest, ManifestManager, TransferConsentHandler,
-        TransferObserver,
+        ChunkHeader, ChunkPacket, ManifestManager, TransferConsentHandler, TransferObserver,
+        TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -111,7 +111,7 @@ impl ReceiverDaemon {
                                 true
                             } else {
                                 consent_clone
-                                    .request_consent(peer, &pending.manifest.job_name)
+                                    .request_consent(peer, pending.request.job_name())
                                     .await
                             };
 
@@ -121,7 +121,7 @@ impl ReceiverDaemon {
                                     config.overwrite_dest
                                 };
 
-                                let receiver = match pending
+                                match pending
                                     .accept(
                                         &target_dir_clone,
                                         observer_clone.clone(),
@@ -131,46 +131,50 @@ impl ReceiverDaemon {
                                     )
                                     .await
                                 {
-                                    Ok(r) => r,
+                                    Ok(AcceptResult::File(receiver)) => {
+                                        observer_clone.on_transfer_started(
+                                            transfer_id,
+                                            peer,
+                                            receiver.total_size,
+                                            &receiver.job_name,
+                                            conn_cancel_token.clone()
+                                        );
+
+                                        tokio::select!{
+                                            _ = conn_cancel_token.cancelled() =>  {
+                                                connection.close(0u32.into(), b"Cancelled by receiver");
+                                                observer_clone.on_transfer_failed(transfer_id, "Cancelled locally");
+                                            }
+
+                                            err = connection.closed() => {
+                                                if let quinn::ConnectionError::ApplicationClosed(app_close) = &err {
+                                                    let reason = String::from_utf8_lossy(&app_close.reason);
+                                                    observer_clone.on_transfer_failed(transfer_id, &reason);
+                                                } else {
+                                                    observer_clone.on_transfer_failed(transfer_id, &err.to_string());
+                                                }
+                                            }
+
+                                            res = receiver.process_chunks(conn_cancel_token.clone()) => {
+                                                match res {
+                                                    Ok(_) => {
+                                                        observer_clone.on_transfer_complete(transfer_id);
+                                                    }
+                                                    Err(e) => {
+                                                        log::error!("Transfer chunk processing error: {e}");
+                                                        observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Ok(AcceptResult::Text) => {
+                                        observer_clone.on_transfer_complete(transfer_id);
+                                        let _ = connection.closed().await;
+                                    }
                                     Err(e) => {
                                         observer_clone.on_transfer_failed(transfer_id, &e.to_string());
                                         return anyhow::Ok(());
-                                    }
-                                };
-
-                                observer_clone.on_transfer_started(
-                                    transfer_id,
-                                    peer,
-                                    receiver.total_size,
-                                    &receiver.job_name,
-                                    conn_cancel_token.clone()
-                                );
-
-                                tokio::select!{
-                                    _ = conn_cancel_token.cancelled() =>  {
-                                        connection.close(0u32.into(), b"Cancelled by receiver");
-                                        observer_clone.on_transfer_failed(transfer_id, "Cancelled locally");
-                                    }
-
-                                    err = connection.closed() => {
-                                        if let quinn::ConnectionError::ApplicationClosed(app_close) = &err {
-                                            let reason = String::from_utf8_lossy(&app_close.reason);
-                                            observer_clone.on_transfer_failed(transfer_id, &reason);
-                                        } else {
-                                            observer_clone.on_transfer_failed(transfer_id, &err.to_string());
-                                        }
-                                    }
-
-                                    res = receiver.process_chunks(conn_cancel_token.clone()) => {
-                                        match res {
-                                            Ok(_) => {
-                                                observer_clone.on_transfer_complete(transfer_id);
-                                            }
-                                            Err(e) => {
-                                                log::error!("Transfer chunk processing error: {e}");
-                                                observer_clone.on_transfer_failed(transfer_id, &e.to_string());
-                                            }
-                                        }
                                     }
                                 }
 
@@ -214,10 +218,15 @@ impl ReceiverDaemon {
     }
 }
 
+pub enum AcceptResult {
+    File(Receiver),
+    Text,
+}
+
 pub(super) struct PendingTransfer {
     pub(super) connection: quinn::Connection,
     pub(super) send_stream: quinn::SendStream,
-    pub(super) manifest: Manifest,
+    pub(super) request: TransferRequest,
 }
 
 impl PendingTransfer {
@@ -229,11 +238,11 @@ impl PendingTransfer {
         let (send_stream, mut recv_stream) = connection.accept_bi().await?;
 
         let buf = recv_stream.read_to_end(MAX_METADATA_SIZE as usize).await?;
-        let manifest: Manifest = rmp_serde::from_slice(&buf)?;
+        let request: TransferRequest = rmp_serde::from_slice(&buf)?;
 
         Ok(Self {
             connection,
-            manifest,
+            request,
             send_stream,
         })
     }
@@ -262,67 +271,78 @@ impl PendingTransfer {
         transfer_id: u32,
         cancel_token: CancellationToken,
         overwrite: bool,
-    ) -> anyhow::Result<Receiver> {
-        let staging = Arc::new(TransferStaging::new(target_dir.to_path_buf(), transfer_id));
-        let job_name = self.manifest.job_name.clone();
+    ) -> anyhow::Result<AcceptResult> {
+        match self.request {
+            TransferRequest::File(manifest) => {
+                let staging = Arc::new(TransferStaging::new(target_dir.to_path_buf(), transfer_id));
+                let job_name = manifest.job_name.clone();
 
-        let staging_clone = staging.clone();
-        tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
+                let staging_clone = staging.clone();
+                tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
 
-        let staging_clone = staging.clone();
-        let instructions = tokio::task::spawn_blocking(move || {
-            ManifestManager::parse(self.manifest, staging_clone.clone(), overwrite)
-        })
-        .await??;
+                let staging_clone = staging.clone();
+                let instructions = tokio::task::spawn_blocking(move || {
+                    ManifestManager::parse(manifest, staging_clone.clone(), overwrite)
+                })
+                .await??;
 
-        let (total_remaining_size, states) =
-            instructions
-                .iter()
-                .fold((0, Vec::new()), |(total, mut states), ins| {
-                    states.push(&ins.state);
-                    (total + ins.remaining_bytes, states)
-                });
+                let (total_remaining_size, states) =
+                    instructions
+                        .iter()
+                        .fold((0, Vec::new()), |(total, mut states), ins| {
+                            states.push(&ins.state);
+                            (total + ins.remaining_bytes, states)
+                        });
 
-        if !Self::is_space_available(total_remaining_size, target_dir).await {
-            let _ = staging.cleanup();
-            let _ = self.send_stream.write_u8(0).await;
-            let _ = self.send_stream.finish();
-            self.connection.close(0u32.into(), b"DiskFull");
-            anyhow::bail!("No available space for the transfer");
+                if !Self::is_space_available(total_remaining_size, target_dir).await {
+                    let _ = staging.cleanup();
+                    let _ = self.send_stream.write_u8(0).await;
+                    let _ = self.send_stream.finish();
+                    self.connection.close(0u32.into(), b"DiskFull");
+                    anyhow::bail!("No available space for the transfer");
+                }
+
+                self.send_stream.write_u8(1).await?;
+
+                let state_buf = rmp_serde::to_vec(&states)?;
+
+                self.send_stream.write_all(&state_buf).await?;
+                self.send_stream.finish()?;
+
+                let mut sessions = HashMap::new();
+
+                for ins in instructions.into_iter() {
+                    let (tx, rx) =
+                        tokio::sync::mpsc::channel::<ChunkPacket>(MAX_CONCURRENT_STREAMS.into());
+                    let file_id = ins.metadata.file_id;
+
+                    let payload = IgnitionPayload {
+                        ins,
+                        observer: observer.clone(),
+                        rx,
+                        transfer_id,
+                        cancel_token: cancel_token.clone(),
+                        staging: staging.clone(),
+                    };
+
+                    sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
+                }
+
+                Ok(AcceptResult::File(Receiver {
+                    connection: self.connection,
+                    total_size: total_remaining_size,
+                    job_name,
+                    sessions: Arc::new(sessions),
+                    staging: staging.clone(),
+                }))
+            }
+            TransferRequest::Text { device_name, content } => {
+                self.send_stream.write_u8(1).await?;
+                self.send_stream.finish()?;
+                observer.on_text_received(self.connection.remote_address(), device_name, content);
+                Ok(AcceptResult::Text)
+            }
         }
-
-        self.send_stream.write_u8(1).await?;
-
-        let state_buf = rmp_serde::to_vec(&states)?;
-
-        self.send_stream.write_all(&state_buf).await?;
-        self.send_stream.finish()?;
-
-        let mut sessions = HashMap::new();
-
-        for ins in instructions.into_iter() {
-            let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(MAX_CONCURRENT_STREAMS.into());
-            let file_id = ins.metadata.file_id;
-
-            let payload = IgnitionPayload {
-                ins,
-                observer: observer.clone(),
-                rx,
-                transfer_id,
-                cancel_token: cancel_token.clone(),
-                staging: staging.clone(),
-            };
-
-            sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
-        }
-
-        Ok(Receiver {
-            connection: self.connection,
-            total_size: total_remaining_size,
-            job_name,
-            sessions: Arc::new(sessions),
-            staging: staging.clone(),
-        })
     }
 
     pub async fn reject(mut self) -> anyhow::Result<()> {

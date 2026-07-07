@@ -78,6 +78,7 @@ pub struct GuiTransfer {
     pub start_time: Instant,
     pub cancel_token: CancellationToken,
     pub local_dir: std::path::PathBuf,
+    pub status: String,
 }
 
 pub enum GuiEvent {
@@ -104,6 +105,11 @@ pub enum GuiEvent {
         transfer_id: u32,
         peer: SocketAddr,
         job_name: String,
+    },
+    TextReceived {
+        job_name: String,
+        content: String,
+        peer_ip: String,
     },
 }
 
@@ -149,6 +155,14 @@ impl TransferObserver for GuiTransferObserver {
         let _ = self.tx.send(GuiEvent::TransferFailed {
             transfer_id,
             error: error.to_string(),
+        });
+    }
+
+    fn on_text_received(&self, peer: SocketAddr, job_name: String, content: String) {
+        let _ = self.tx.send(GuiEvent::TextReceived {
+            job_name,
+            content,
+            peer_ip: peer.ip().to_string(),
         });
     }
 }
