@@ -165,6 +165,7 @@ pub fn setup(
     });
 
     // Cancel Transfer
+    let event_clone = event_tx.clone();
     main_window.global::<Logic>().on_cancel_transfer({
         let local_transfers = local_transfers.clone();
         move |transfer_id| {
@@ -173,7 +174,7 @@ pub fn setup(
             if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
                 transfer.cancel_token.cancel();
 
-                let _ = event_tx.send(GuiEvent::TransferFailed {
+                let _ = event_clone.send(GuiEvent::TransferFailed {
                     transfer_id: transfer_id as u32,
                     error: "Transfer Cancelled".to_string(),
                 });

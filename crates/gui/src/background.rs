@@ -132,7 +132,7 @@ pub fn spawn_transfers(
                             transfers.push(GuiTransfer {
                                 id: transfer_id,
                                 is_sender,
-                                job_name,
+                                job_name: job_name.clone(),
                                 total_bytes,
                                 bytes_transferred: bytes_done,
                                 bytes_done_at_start: bytes_done,
@@ -145,6 +145,12 @@ pub fn spawn_transfers(
                             });
                             active_dirty = true;
                             completed_dirty = true;
+
+                            show_toast(
+                                main_window_weak_transfers.clone(),
+                                format!("Started: {}", job_name),
+                                ToastType::Info,
+                            );
                         }
                         GuiEvent::ChunkTransferred { transfer_id, bytes } => {
                             if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
