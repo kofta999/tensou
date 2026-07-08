@@ -37,6 +37,23 @@ pub struct Manifest {
     pub files: Vec<Metadata>,
 }
 
+impl Manifest {
+    pub fn get_receiving_folder(&self) -> Option<&str> {
+        if self.top_level_targets.len() == 1 {
+            let target = &self.top_level_targets[0];
+            let prefix = format!("{}/", target);
+            if self
+                .files
+                .iter()
+                .any(|f| f.relative_path.starts_with(&prefix))
+            {
+                return Some(target);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Metadata {
     pub file_id: FileId,
@@ -211,16 +228,24 @@ pub struct ManifestManager;
 impl ManifestManager {
     pub fn parse(
         manifest: Manifest,
-        staging: Arc<TransferStaging>,
+        downloads_dir: &Path,
         overwrite: bool,
-    ) -> anyhow::Result<Vec<JobInstruction>> {
+    ) -> anyhow::Result<(Vec<JobInstruction>, Arc<TransferStaging>)> {
+        use crate::STAGING_DIR_NAME;
         let mut instructions = Vec::new();
         let mut unique_mappings = HashMap::new(); // Map: Original Target -> Unique Target
 
-        for target in manifest.top_level_targets {
-            let original_path = staging.final_path(&target);
-            let has_staging =
-                staging.state_path(&target).exists() || staging.staging_dir.join(&target).is_dir();
+        for target in &manifest.top_level_targets {
+            let original_path = downloads_dir.join(target);
+            let has_staging = {
+                // If target is a folder: downloads_dir/target/.tensou exists
+                let folder_staging = original_path.join(STAGING_DIR_NAME);
+                // If target is a file: downloads_dir/.tensou/target.state exists
+                let file_state = downloads_dir
+                    .join(STAGING_DIR_NAME)
+                    .join(format!("{}.state", target));
+                folder_staging.exists() || file_state.exists()
+            };
 
             let unique_path = if overwrite || has_staging {
                 original_path
@@ -233,8 +258,31 @@ impl ManifestManager {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            unique_mappings.insert(target, unique_name);
+            unique_mappings.insert(target.clone(), unique_name);
         }
+
+        // Determine top_level_prefix
+        let top_level_prefix = if manifest.top_level_targets.len() == 1 {
+            let target = &manifest.top_level_targets[0];
+            let unique_target = unique_mappings.get(target).unwrap();
+            let prefix = format!("{}/", target);
+            if manifest
+                .files
+                .iter()
+                .any(|f| f.relative_path.starts_with(&prefix))
+            {
+                Some(unique_target.as_str())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let staging = Arc::new(TransferStaging::new(
+            downloads_dir.to_path_buf(),
+            top_level_prefix,
+        ));
 
         for mut metadata in manifest.files.into_iter() {
             for (original_target, unique_target) in &unique_mappings {
@@ -272,7 +320,7 @@ impl ManifestManager {
             instructions.push(instruction);
         }
 
-        Ok(instructions)
+        Ok((instructions, staging))
     }
 
     pub fn build(path: &Path) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
@@ -400,6 +448,7 @@ pub trait TransferObserver: Send + Sync {
         _transfer_id: u32,
         _peer: SocketAddr,
         _total_bytes: u64,
+        _bytes_done: u64,
         _job_name: &str,
         _cancel_token: CancellationToken,
     ) {
@@ -712,11 +761,6 @@ mod tests {
     #[test]
     fn manifest_build_path_traversal_is_rejected() {
         let staging_dir = tempdir().unwrap();
-        let staging = std::sync::Arc::new(crate::disk::TransferStaging::new(
-            staging_dir.path().to_path_buf(),
-            1,
-        ));
-        staging.prepare().unwrap();
 
         let manifest = Manifest {
             job_name: "job".into(),
@@ -729,7 +773,7 @@ mod tests {
             }],
         };
 
-        let result = ManifestManager::parse(manifest, staging, false);
+        let result = ManifestManager::parse(manifest, staging_dir.path(), false);
         assert!(result.is_err(), "Path traversal should be rejected");
     }
 
@@ -746,12 +790,6 @@ mod tests {
             b"existing pic",
         )
         .unwrap();
-
-        let staging = std::sync::Arc::new(crate::disk::TransferStaging::new(
-            downloads_dir.path().to_path_buf(),
-            1,
-        ));
-        staging.prepare().unwrap();
 
         // Manifest containing the colliding targets
         let manifest = Manifest {
@@ -773,7 +811,8 @@ mod tests {
             ],
         };
 
-        let instructions = ManifestManager::parse(manifest, staging, false).unwrap();
+        let (instructions, _staging) =
+            ManifestManager::parse(manifest, downloads_dir.path(), false).unwrap();
         assert_eq!(instructions.len(), 2);
 
         // Check that paths are correctly updated to unique names

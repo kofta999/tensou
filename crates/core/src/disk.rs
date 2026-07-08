@@ -152,12 +152,6 @@ impl DiskWriter {
         Ok(())
     }
 
-    async fn allocate_sparse_file(path: &PathBuf, size: u64) -> anyhow::Result<()> {
-        let file = tokio::fs::File::create(&path).await?;
-        file.set_len(size).await?;
-        Ok(())
-    }
-
     async fn save_state(&self) -> anyhow::Result<()> {
         if self.metadata.size <= self.metadata.chunk_size {
             return Ok(());
@@ -189,21 +183,21 @@ impl DiskWriter {
                 }
             }
 
-            if !self.is_resumed {
-                if is_small {
-                    tokio::fs::File::create(write_path).await?;
-                } else {
-                    Self::allocate_sparse_file(write_path, self.metadata.size).await?;
-                }
-                self.is_resumed = true;
-            }
-
             if self.file.is_none() {
                 let file = tokio::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
+                    .create(true)
                     .open(write_path)
                     .await?;
+
+                if !self.is_resumed {
+                    if !is_small {
+                        file.set_len(self.metadata.size).await?;
+                    }
+                    self.is_resumed = true;
+                }
+
                 self.file = Some(file);
             }
 
@@ -294,29 +288,47 @@ pub struct TransferStaging {
     pub dest_dir: PathBuf,
     /// Hidden staging directory on the same partition (e.g. `Downloads/MyTransfer/.tensou/`)
     pub staging_dir: PathBuf,
+    /// The prefix of the receiving folder to strip, if any
+    pub top_level_prefix: Option<String>,
 }
 
 impl TransferStaging {
-    pub fn new(downloads_dir: PathBuf, transfer_id: u32) -> Self {
+    pub fn new(downloads_dir: PathBuf, top_level_prefix: Option<&str>) -> Self {
+        let staging_dir = if let Some(prefix) = top_level_prefix {
+            downloads_dir.join(prefix).join(STAGING_DIR_NAME)
+        } else {
+            downloads_dir.join(STAGING_DIR_NAME)
+        };
         Self {
-            staging_dir: downloads_dir
-                .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string()),
             dest_dir: downloads_dir,
+            staging_dir,
+            top_level_prefix: top_level_prefix.map(|s| s.to_string()),
         }
+    }
+
+    fn get_staging_relative_path(&self, relative_path: &str) -> PathBuf {
+        let path = Path::new(relative_path);
+        if self.top_level_prefix.is_some() {
+            if let Some(first_component) = path.components().next() {
+                if let Ok(stripped) = path.strip_prefix(first_component) {
+                    return stripped.to_path_buf();
+                }
+            }
+        }
+        path.to_path_buf()
     }
 
     /// Resolve where a partial download should go (e.g. `.tensou/subfolder/file.part`)
     pub fn part_path(&self, relative_path: &str) -> PathBuf {
         self.staging_dir
-            .join(relative_path)
+            .join(self.get_staging_relative_path(relative_path))
             .with_added_extension("part")
     }
 
     /// Resolve where a transfer state file should go (e.g. `.tensou/subfolder/file.state`)
     pub fn state_path(&self, relative_path: &str) -> PathBuf {
         self.staging_dir
-            .join(relative_path)
+            .join(self.get_staging_relative_path(relative_path))
             .with_added_extension("state")
     }
 
@@ -376,8 +388,8 @@ mod tests {
     struct TestObserver;
     impl TransferObserver for TestObserver {}
 
-    fn make_staging(dir: &std::path::Path, transfer_id: u32) -> Arc<TransferStaging> {
-        let s = Arc::new(TransferStaging::new(dir.to_path_buf(), transfer_id));
+    fn make_staging(dir: &std::path::Path, top_level_prefix: Option<&str>) -> Arc<TransferStaging> {
+        let s = Arc::new(TransferStaging::new(dir.to_path_buf(), top_level_prefix));
         s.prepare().unwrap();
         s
     }
@@ -386,28 +398,25 @@ mod tests {
     #[test]
     fn staging_folder_transfer_paths() {
         let dir = tempdir().unwrap();
-        let transfer_id = 0;
-        let staging = make_staging(dir.path(), transfer_id);
+        let staging = make_staging(dir.path(), Some("MyPhotos"));
 
         assert_eq!(
             staging.staging_dir,
-            dir.path()
-                .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string())
+            dir.path().join("MyPhotos").join(STAGING_DIR_NAME)
         );
         assert_eq!(
             staging.part_path("MyPhotos/nested/img.jpg"),
             dir.path()
+                .join("MyPhotos")
                 .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string())
-                .join("MyPhotos/nested/img.jpg.part")
+                .join("nested/img.jpg.part")
         );
         assert_eq!(
             staging.state_path("MyPhotos/nested/img.jpg"),
             dir.path()
+                .join("MyPhotos")
                 .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string())
-                .join("MyPhotos/nested/img.jpg.state")
+                .join("nested/img.jpg.state")
         );
         assert_eq!(
             staging.final_path("MyPhotos/nested/img.jpg"),
@@ -419,28 +428,16 @@ mod tests {
     #[test]
     fn staging_single_file_transfer_paths() {
         let dir = tempdir().unwrap();
-        let transfer_id = 0;
-        let staging = make_staging(dir.path(), transfer_id);
+        let staging = make_staging(dir.path(), None);
 
-        assert_eq!(
-            staging.staging_dir,
-            dir.path()
-                .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string())
-        );
+        assert_eq!(staging.staging_dir, dir.path().join(STAGING_DIR_NAME));
         assert_eq!(
             staging.part_path("photo.jpg"),
-            dir.path()
-                .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string())
-                .join("photo.jpg.part")
+            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.part")
         );
         assert_eq!(
             staging.state_path("photo.jpg"),
-            dir.path()
-                .join(STAGING_DIR_NAME)
-                .join(transfer_id.to_string())
-                .join("photo.jpg.state")
+            dir.path().join(STAGING_DIR_NAME).join("photo.jpg.state")
         );
         assert_eq!(
             staging.final_path("photo.jpg"),
@@ -452,7 +449,7 @@ mod tests {
     #[test]
     fn staging_prepare_creates_staging_dir() {
         let dir = tempdir().unwrap();
-        let staging = Arc::new(TransferStaging::new(dir.path().to_path_buf(), 0));
+        let staging = Arc::new(TransferStaging::new(dir.path().to_path_buf(), None));
         assert!(!staging.staging_dir.exists());
         staging.prepare().unwrap();
         assert!(staging.staging_dir.exists());
@@ -462,7 +459,7 @@ mod tests {
     #[test]
     fn staging_cleanup_removes_dir() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), 0);
+        let staging = make_staging(dir.path(), None);
         assert!(staging.staging_dir.exists());
         staging.cleanup().unwrap();
         assert!(!staging.staging_dir.exists());
@@ -472,7 +469,7 @@ mod tests {
     #[test]
     fn staging_create_file_staging_dir_nested() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), 0);
+        let staging = make_staging(dir.path(), None);
         staging.create_file_staging_dir("a/b/c.txt").unwrap();
         assert!(staging.staging_dir.join("a/b").is_dir());
     }
@@ -481,7 +478,7 @@ mod tests {
     #[test]
     fn staging_create_file_destination_dir_nested() {
         let dir = tempdir().unwrap();
-        let staging = make_staging(dir.path(), 0);
+        let staging = make_staging(dir.path(), None);
         staging.create_file_destination_dir("a/b/c.txt").unwrap();
         assert!(staging.dest_dir.join("a/b").is_dir());
     }
@@ -508,7 +505,7 @@ mod tests {
         let (tx, rx) = mpsc::channel::<ChunkPacket>(16);
         let instruction = JobInstruction::new(send_session.get_metadata());
 
-        let staging = make_staging(dest_dir.path(), 0);
+        let staging = make_staging(dest_dir.path(), None);
 
         let ignition = IgnitionPayload {
             ins: instruction,
@@ -573,7 +570,7 @@ mod tests {
         let instruction = JobInstruction::new(send_session.get_metadata());
         let cancel_token = CancellationToken::new();
 
-        let staging = make_staging(dest_dir.path(), 0);
+        let staging = make_staging(dest_dir.path(), None);
         let part_path = staging.part_path("big.bin");
 
         let (obs_tx, mut obs_rx) = mpsc::channel(1);

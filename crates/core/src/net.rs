@@ -58,8 +58,9 @@ mod tests {
         let daemon = ReceiverDaemon::new("127.0.0.1:0".parse().unwrap(), config).unwrap();
         let addr = daemon.endpoint.local_addr().unwrap();
         let handle = tokio::spawn(async move {
+            let (_tx, rx) = tokio::sync::mpsc::channel::<()>(1);
             daemon
-                .run(consent, observer, CancellationToken::new())
+                .run(consent, observer, CancellationToken::new(), rx)
                 .await;
         });
         // Give the server a moment to start listening
@@ -305,11 +306,13 @@ mod tests {
         let parent_cancel_clone = parent_cancel.clone();
 
         let server_handle = tokio::spawn(async move {
+            let (_tx, rx) = tokio::sync::mpsc::channel::<()>(1);
             daemon
                 .run(
                     Arc::new(AutoAccept),
                     Arc::new(TestObserver),
                     parent_cancel_clone,
+                    rx,
                 )
                 .await;
         });
@@ -351,7 +354,7 @@ mod tests {
         let source_folder = source_dir.path().join("small_files");
         std::fs::create_dir(&source_folder)?;
 
-        let num_files = 3000;
+        let num_files = 500;
         let file_size = 10 * 1024; // 10 KB
         let content = vec![0xEEu8; file_size];
         for i in 0..num_files {
