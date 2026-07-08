@@ -43,6 +43,8 @@ pub fn run() -> anyhow::Result<()> {
     let config_mutex = Arc::new(Mutex::new(config));
     let config_clone = config_mutex.clone();
 
+    let (reload_tx, reload_rx) = mpsc::channel::<()>(1);
+
     tokio::spawn(async move {
         let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
 
@@ -66,7 +68,9 @@ pub fn run() -> anyhow::Result<()> {
                 event_tx: daemon_event_tx.clone(),
             });
 
-            daemon.run(consent_handler, observer, cancel_token).await;
+            daemon
+                .run(consent_handler, observer, cancel_token, reload_rx)
+                .await;
         }
     });
 
@@ -76,6 +80,7 @@ pub fn run() -> anyhow::Result<()> {
         event_rx,
         consent_registry,
         config_mutex,
+        reload_tx,
     )?;
 
     Ok(())

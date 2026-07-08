@@ -147,7 +147,7 @@ export component TransfersView inherits VerticalLayout {
                                 }
 
                                 Text {
-                                    text: transfer.bytes_transferred + " / " + transfer.total_bytes;
+                                    text: transfer.bytes_transferred;
                                     color: Theme.text-secondary;
                                     font-size: 12px;
                                     font-weight: 600;
@@ -255,6 +255,22 @@ export component TransfersView inherits VerticalLayout {
                                 Text {
                                     text: transfer.speed_eta;
                                     color: transfer.speed_eta == "Completed" ? Theme.success : (transfer.speed_eta == "Cancelled" ? Theme.secondary : Theme.error);
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                            }
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text {
+                                    text: (transfer.is_sender ? "To: " : "From: ") + transfer.peer_name;
+                                    color: Theme.text-secondary;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: transfer.timestamp;
+                                    color: Theme.text-secondary;
                                     font-size: 12px;
                                     font-weight: 600;
                                 }

@@ -1,6 +1,6 @@
 use crate::{
     background, callbacks,
-    state::{ConsentRegistry, GuiEvent, GuiTransfer},
+    state::{ConsentRegistry, GuiDevice, GuiEvent, GuiTransfer},
 };
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -16,6 +16,7 @@ pub fn run_gui(
     event_rx: mpsc::UnboundedReceiver<GuiEvent>,
     consent_registry: Arc<ConsentRegistry>,
     config: Arc<Mutex<Config>>,
+    reload_tx: mpsc::Sender<()>,
 ) -> anyhow::Result<()> {
     let selector = slint::BackendSelector::new()
         .backend_name("winit".into())
@@ -60,14 +61,18 @@ pub fn run_gui(
         config,
         local_transfers.clone(),
         local_completed_transfers.clone(),
+        reload_tx,
     );
 
-    background::spawn_discovery(&main_window_weak, devices_rx);
+    let local_devices = Arc::new(std::sync::Mutex::new(Vec::<GuiDevice>::new()));
+
+    background::spawn_discovery(&main_window_weak, devices_rx, local_devices.clone());
     background::spawn_transfers(
         &main_window_weak,
         local_transfers,
         local_completed_transfers,
         event_rx,
+        local_devices,
     );
 
     main_window.run()?;
