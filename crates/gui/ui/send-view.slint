@@ -264,11 +264,11 @@ export component SendView inherits FocusScope {
 
                                 Image {
                                     source: {
-                                        if (AppData.os_type == OperatingSystemType.linux) {
+                                        if (AppData.os_type == "linux") {
                                             @image-url("icons/linux.svg")
-                                        } else if (AppData.os_type == OperatingSystemType.windows) {
+                                        } else if (AppData.os_type == "windows") {
                                             @image-url("icons/windows.svg")
-                                        } else if (AppData.os_type == OperatingSystemType.macos) {
+                                        } else if (AppData.os_type == "macos") {
                                             @image-url("icons/macos.svg")
                                         } else {
                                             @image-url("icons/linux.svg")

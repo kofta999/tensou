@@ -1,6 +1,7 @@
 use crate::GuiDevice;
 use crate::GuiTransfer;
 use crate::state::GuiEvent;
+use crate::views::ToastType;
 use crate::views::{
     AppData, ClipboardMessage, ConsentRequest, Device, MainWindow, ToastData, Transfer,
 };
@@ -30,7 +31,7 @@ pub fn spawn_discovery(
                     show_toast(
                         main_window_weak_devices.clone(),
                         format!("Device online: {}", discovered_device.display_name),
-                        "info".to_string(),
+                        ToastType::Info,
                     );
                     // Check if we already have this device to prevent duplicate entries
                     devices.retain(|v| v.device_uuid != discovered_device.device_uuid);
@@ -159,7 +160,7 @@ pub fn spawn_transfers(
                                 show_toast(
                                     main_window_weak_transfers.clone(),
                                     format!("Completed: {}", completed_t.job_name),
-                                    "success".to_string(),
+                                    ToastType::Success,
                                 );
                                 completed_transfers.push(completed_t);
                             }
@@ -180,7 +181,7 @@ pub fn spawn_transfers(
                                 show_toast(
                                     main_window_weak_transfers.clone(),
                                     format!("{}: {}", failed_t.status, failed_t.job_name),
-                                    "error".to_string(),
+                                    ToastType::Error,
                                 );
                                 completed_transfers.push(failed_t);
                             }
@@ -195,7 +196,7 @@ pub fn spawn_transfers(
                             show_toast(
                                 main_window_weak_transfers.clone(),
                                 format!("Received text from {}", job_name),
-                                "success".to_string(),
+                                ToastType::Success,
                             );
 
                             if let Some(ref mut ctx) = clipboard_ctx {
@@ -385,11 +386,11 @@ pub fn rc_model_from_vec<T: Clone + 'static>(v: Vec<T>) -> slint::ModelRc<T> {
     slint::ModelRc::new(vec_model)
 }
 
-fn show_toast(ui_weak: Weak<MainWindow>, message: String, toast_type: String) {
+fn show_toast(ui_weak: Weak<MainWindow>, message: String, toast_type: ToastType) {
     let _ = ui_weak.upgrade_in_event_loop(move |ui| {
         let toast = ui.global::<ToastData>();
         toast.set_message(message.into());
-        toast.set_toast_type(toast_type.into());
+        toast.set_toast_type(toast_type);
         toast.set_show(true);
     });
 
