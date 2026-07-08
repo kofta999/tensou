@@ -136,15 +136,16 @@ export component SendView inherits FocusScope {
             }
 
             Rectangle {
-                background: drop_area.has-drag ? Theme.surface-hover : Theme.surface;
+                background: Theme.surface;
                 border-radius: 12px;
                 border-width: 2px;
-                border-color: drop_area.has-drag ? Theme.secondary : transparent;
+                border-color: transparent;
                 height: layout.preferred-height;
 
                 animate background { duration: 150ms; }
                 animate border-color { duration: 150ms; }
 
+                /*
                 drop_area := DropArea {
                     width: 100%;
                     height: 100%;
@@ -156,6 +157,7 @@ export component SendView inherits FocusScope {
                         return DragAction.copy;
                     }
                 }
+                */
 
                 layout := VerticalLayout {
                     padding: 16px;
@@ -294,15 +296,16 @@ export component SendView inherits FocusScope {
 
             // Part 2: Drag & Drop Space (File Drop Area)
             Rectangle {
-                background: actions_drop_area.has-drag ? Theme.surface-hover : Theme.background;
+                background: Theme.background;
                 border-radius: 12px;
                 border-width: 2px;
-                border-color: actions_drop_area.has-drag ? Theme.secondary : Theme.surface-hover;
+                border-color: Theme.surface-hover;
                 height: 120px;
 
                 animate background { duration: 150ms; }
                 animate border-color { duration: 150ms; }
 
+                /*
                 actions_drop_area := DropArea {
                     width: 100%;
                     height: 100%;
@@ -318,6 +321,7 @@ export component SendView inherits FocusScope {
                         return DragAction.copy;
                     }
                 }
+                */
 
                 VerticalLayout {
                     alignment: center;
@@ -329,14 +333,14 @@ export component SendView inherits FocusScope {
                             source: @image-url("icons/file.svg");
                             width: 36px;
                             height: 36px;
-                            colorize: actions_drop_area.has-drag ? Theme.secondary : Theme.text-secondary;
+                            colorize: Theme.text-secondary;
                             animate colorize { duration: 150ms; }
                         }
                     }
 
                     Text {
-                        text: "Drag & Drop files here to send";
-                        color: actions_drop_area.has-drag ? #ffffff : Theme.text-secondary;
+                        text: "Select files or folders to send";
+                        color: Theme.text-secondary;
                         font-size: 13px;
                         font-weight: 600;
                         horizontal-alignment: center;

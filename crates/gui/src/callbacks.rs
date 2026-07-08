@@ -9,7 +9,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tensou_core::SERVER_PORT;
 use tensou_core::config::Config;
 use tensou_core::net;
 use tokio::sync::mpsc;
@@ -196,6 +195,7 @@ pub fn setup(
             }
         });
 
+    /*
     // Device Send Dropped File
     main_window.global::<Logic>().on_device_send_dropped_file({
         let event_tx = event_tx.clone();
@@ -251,6 +251,7 @@ pub fn setup(
             }
         }
     });
+    */
 
     // Send Text to Device
     main_window.global::<Logic>().on_send_text_to_device({
