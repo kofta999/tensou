@@ -18,6 +18,8 @@ export struct Transfer {
     bytes_transferred: string,
     progress: float,
     speed_eta: string,
+    timestamp: string,
+    peer_name: string,
 }
 
 export struct ClipboardMessage {
@@ -44,4 +46,10 @@ export enum AppTab {
 export struct CancelRequest {
     transfer_id: int,
     job_name: string,
+}
+
+export enum ToastType {
+    success,
+    error,
+    info
 }

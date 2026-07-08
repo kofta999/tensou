@@ -5,6 +5,7 @@ import {
     ConsentRequest,
     AppTab,
     CancelRequest,
+    ToastType,
 } from "types.slint";
 import { TabButton, ZenButton } from "components.slint";
 import { SendView } from "send-view.slint";
@@ -13,7 +14,7 @@ import { SettingsView } from "settings-view.slint";
 import { Theme, AppData, Logic, ToastData } from "globals.slint";
 import { Dialog } from "slintcn/components/dialog.slint";
 
-export { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest, AppData, Logic, ToastData }
+export { Device, Transfer, ClipboardMessage, ConsentRequest, AppTab, CancelRequest, AppData, Logic, ToastData, ToastType }
 
 export component MainWindow inherits Window {
     title: "Tensou";
@@ -331,7 +332,7 @@ export component MainWindow inherits Window {
 
     // Toast Notification Overlay
     Rectangle {
-        background: ToastData.toast_type == "success" ? Theme.success : (ToastData.toast_type == "error" ? Theme.error : Theme.info);
+        background: ToastData.toast_type == ToastType.success ? Theme.success : (ToastData.toast_type == ToastType.error ? Theme.error : Theme.info);
         border-radius: 8px;
         height: layout.preferred-height;
         width: 320px;
@@ -357,7 +358,7 @@ export component MainWindow inherits Window {
             alignment: start;
 
             Image {
-                source: ToastData.toast_type == "success" ? @image-url("icons/check.svg") : @image-url("icons/info.svg");
+                source: ToastData.toast_type == ToastType.success ? @image-url("icons/check.svg") : @image-url("icons/info.svg");
                 width: 18px;
                 height: 18px;
                 colorize: Theme.text-dark;

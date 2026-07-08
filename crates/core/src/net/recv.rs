@@ -5,8 +5,7 @@ use crate::{
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
     protocol::{
-        ChunkHeader, ChunkPacket, ManifestManager, TransferConsentHandler, TransferObserver,
-        TransferRequest,
+        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferObserver, TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -25,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 pub struct ReceiverDaemon {
     pub(super) endpoint: quinn::Endpoint,
     pub(super) config: Arc<Mutex<Config>>,
-    pub(super) _discovery_daemon: ServiceDaemon,
+    pub(super) _discovery_daemon: Arc<Mutex<ServiceDaemon>>,
 }
 
 impl ReceiverDaemon {
@@ -40,7 +39,7 @@ impl ReceiverDaemon {
         Ok(Self {
             endpoint,
             config,
-            _discovery_daemon,
+            _discovery_daemon: Arc::new(Mutex::new(_discovery_daemon)),
         })
     }
 
@@ -53,6 +52,7 @@ impl ReceiverDaemon {
         consent: Arc<dyn TransferConsentHandler>,
         observer: Arc<dyn TransferObserver>,
         parent_cancel_token: CancellationToken,
+        mut reload_rx: tokio::sync::mpsc::Receiver<()>,
     ) {
         use tokio::task::JoinSet;
         use tokio::time::{Duration, timeout};
@@ -65,7 +65,16 @@ impl ReceiverDaemon {
                     break;
                 }
 
-            incoming = self.endpoint.accept() => {
+                Some(()) = reload_rx.recv() => {
+                    log::info!("Config update detected, reloading mDNS service...");
+                    let config = self.config.lock().unwrap().clone();
+                    if let Ok(new_daemon) = discovery::register_service(&config) {
+                        *self._discovery_daemon.lock().unwrap() = new_daemon;
+                    }
+                }
+
+                incoming = self.endpoint.accept() => {
+
                 let Some(incoming) = incoming else {break};
 
                 let target_dir_clone = {
@@ -115,7 +124,7 @@ impl ReceiverDaemon {
                                     .await
                             };
 
-                             if is_accepted {
+                            if is_accepted {
                                 let overwrite = {
                                     let config = config_clone.lock().unwrap();
                                     config.overwrite_dest
@@ -127,7 +136,7 @@ impl ReceiverDaemon {
                                         observer_clone.clone(),
                                         transfer_id,
                                         conn_cancel_token.clone(),
-                                        overwrite
+                                        overwrite,
                                     )
                                     .await
                                 {
@@ -135,7 +144,8 @@ impl ReceiverDaemon {
                                         observer_clone.on_transfer_started(
                                             transfer_id,
                                             peer,
-                                            receiver.total_size,
+                                            receiver.total_full_size,
+                                            receiver.total_full_size.saturating_sub(receiver.total_size),
                                             &receiver.job_name,
                                             conn_cancel_token.clone()
                                         );
@@ -274,25 +284,28 @@ impl PendingTransfer {
     ) -> anyhow::Result<AcceptResult> {
         match self.request {
             TransferRequest::File(manifest) => {
-                let staging = Arc::new(TransferStaging::new(target_dir.to_path_buf(), transfer_id));
                 let job_name = manifest.job_name.clone();
+
+                let target_dir_clone = target_dir.to_path_buf();
+                let (instructions, staging) = tokio::task::spawn_blocking(move || {
+                    protocol::manifest::parse(manifest, &target_dir_clone, overwrite)
+                })
+                .await??;
 
                 let staging_clone = staging.clone();
                 tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
 
-                let staging_clone = staging.clone();
-                let instructions = tokio::task::spawn_blocking(move || {
-                    ManifestManager::parse(manifest, staging_clone.clone(), overwrite)
-                })
-                .await??;
-
-                let (total_remaining_size, states) =
-                    instructions
-                        .iter()
-                        .fold((0, Vec::new()), |(total, mut states), ins| {
-                            states.push(&ins.state);
-                            (total + ins.remaining_bytes, states)
-                        });
+                let (total_remaining_size, total_full_size, states) = instructions.iter().fold(
+                    (0, 0, Vec::new()),
+                    |(remaining, full, mut states), ins| {
+                        states.push(&ins.state);
+                        (
+                            remaining + ins.remaining_bytes,
+                            full + ins.metadata.size,
+                            states,
+                        )
+                    },
+                );
 
                 if !Self::is_space_available(total_remaining_size, target_dir).await {
                     let _ = staging.cleanup();
@@ -331,6 +344,7 @@ impl PendingTransfer {
                 Ok(AcceptResult::File(Receiver {
                     connection: self.connection,
                     total_size: total_remaining_size,
+                    total_full_size,
                     job_name,
                     sessions: Arc::new(sessions),
                     staging: staging.clone(),
@@ -360,6 +374,7 @@ impl PendingTransfer {
 pub struct Receiver {
     pub(super) connection: quinn::Connection,
     pub(super) total_size: u64,
+    pub(super) total_full_size: u64,
     pub(super) job_name: String,
     pub(super) sessions: Arc<HashMap<FileId, Arc<ReceiveSession>>>,
     pub(super) staging: Arc<TransferStaging>,

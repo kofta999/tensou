@@ -75,10 +75,13 @@ pub struct GuiTransfer {
     pub job_name: String,
     pub total_bytes: u64,
     pub bytes_transferred: u64,
+    pub bytes_done_at_start: u64,
     pub start_time: Instant,
     pub cancel_token: CancellationToken,
     pub local_dir: std::path::PathBuf,
     pub status: String,
+    pub timestamp: String,
+    pub peer_name: String,
 }
 
 pub enum GuiEvent {
@@ -87,8 +90,10 @@ pub enum GuiEvent {
         is_sender: bool,
         job_name: String,
         total_bytes: u64,
+        bytes_done: u64,
         cancel_token: CancellationToken,
         local_dir: std::path::PathBuf,
+        peer_ip: String,
     },
     ChunkTransferred {
         transfer_id: u32,
@@ -124,8 +129,9 @@ impl TransferObserver for GuiTransferObserver {
     fn on_transfer_started(
         &self,
         transfer_id: u32,
-        _peer: SocketAddr,
+        peer: SocketAddr,
         total_bytes: u64,
+        bytes_done: u64,
         job_name: &str,
         cancel_token: CancellationToken,
     ) {
@@ -134,8 +140,10 @@ impl TransferObserver for GuiTransferObserver {
             is_sender: self.is_sender,
             job_name: job_name.to_string(),
             total_bytes,
+            bytes_done,
             cancel_token,
             local_dir: self.target_dir.clone(),
+            peer_ip: peer.ip().to_string(),
         });
     }
 

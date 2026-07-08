@@ -5,6 +5,7 @@ import {
     ConsentRequest,
     AppTab,
     CancelRequest,
+    ToastType,
 } from "types.slint";
 
 export global Theme {
@@ -96,5 +97,5 @@ export global Logic {
 export global ToastData {
     in-out property <bool> show: false;
     in-out property <string> message: "";
-    in-out property <string> toast_type: "info"; // "success", "error", "info"
+    in-out property <ToastType> toast_type: ToastType.info;
 }

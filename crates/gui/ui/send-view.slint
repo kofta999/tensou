@@ -4,6 +4,7 @@ import { DeviceCard, ZenButton } from "components.slint";
 import { Input } from "slintcn/components/input.slint";
 import { Textarea } from "slintcn/components/textarea.slint";
 import { Theme, AppData, Logic } from "globals.slint";
+import { Dialog } from "slintcn/components/dialog.slint";
 
 export component SendView inherits FocusScope {
     // Purely local UI state
@@ -44,7 +45,7 @@ export component SendView inherits FocusScope {
                     }
 
                     // Pulsing dot indicator
-                Rectangle {
+                    Rectangle {
                         width: 8px;
                         height: 8px;
                         background: AppData.devices.length == 0 ? Theme.secondary : Theme.success;
@@ -66,16 +67,16 @@ export component SendView inherits FocusScope {
             if AppData.devices.length == 0: VerticalLayout {
                 alignment: center;
                 height: 140px;
+                vertical-stretch: 1;
                 spacing: 16px;
 
-                // Minimalist pulsing wave representation (concentric Japanese-style waves)
-            Rectangle {
+                Rectangle {
                     width: 60px;
                     height: 60px;
                     x: (parent.width - self.width) / 2;
 
                     // Center dot
-                Rectangle {
+                    Rectangle {
                         width: 12px;
                         height: 12px;
                         background: Theme.primary;
@@ -85,7 +86,7 @@ export component SendView inherits FocusScope {
                     }
 
                     // Ring 1
-                Rectangle {
+                    Rectangle {
                         width: 30px + 20px * Math.sin(animation-tick() / 400ms * 1rad);
                         height: self.width;
                         border-width: 1px;
@@ -97,7 +98,7 @@ export component SendView inherits FocusScope {
                     }
 
                     // Ring 2
-                Rectangle {
+                    Rectangle {
                         width: 45px + 15px * Math.cos(animation-tick() / 500ms * 1rad);
                         height: self.width;
                         border-width: 1.5px;
@@ -200,7 +201,7 @@ export component SendView inherits FocusScope {
             spacing: 20px;
 
             // Part 1: Back button + Destination details card
-        HorizontalLayout {
+            HorizontalLayout {
                 spacing: 12px;
 
                 ZenButton {
@@ -228,7 +229,7 @@ export component SendView inherits FocusScope {
                         alignment: start;
 
                         // Avatar
-                    Rectangle {
+                        Rectangle {
                             width: 42px;
                             height: 42px;
                             background: Theme.background;
@@ -262,7 +263,17 @@ export component SendView inherits FocusScope {
                                 }
 
                                 Image {
-                                    source: is_direct_connect ? @image-url("icons/network.svg") : (selected_device.os_type == "linux" ? @image-url("icons/linux.svg") : (selected_device.os_type == "windows" ? @image-url("icons/windows.svg") : (selected_device.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg"))));
+                                    source: {
+                                        if (AppData.os_type == "linux") {
+                                            @image-url("icons/linux.svg")
+                                        } else if (AppData.os_type == "windows") {
+                                            @image-url("icons/windows.svg")
+                                        } else if (AppData.os_type == "macos") {
+                                            @image-url("icons/macos.svg")
+                                        } else {
+                                            @image-url("icons/linux.svg")
+                                        }
+                                    }
                                     width: 18px;
                                     height: 18px;
                                     colorize: Theme.text-secondary;
@@ -282,7 +293,7 @@ export component SendView inherits FocusScope {
             }
 
             // Part 2: Drag & Drop Space (File Drop Area)
-        Rectangle {
+            Rectangle {
                 background: actions_drop_area.has-drag ? Theme.surface-hover : Theme.background;
                 border-radius: 12px;
                 border-width: 2px;
@@ -335,7 +346,7 @@ export component SendView inherits FocusScope {
             }
 
             // Part 3: Buttons stacked under each other
-        VerticalLayout {
+            VerticalLayout {
                 spacing: 10px;
 
                 ZenButton {
@@ -380,110 +391,85 @@ export component SendView inherits FocusScope {
     }
 
     // Modal Overlay for Sending Text
-    if showing_text_modal: TouchArea {
-        width: 100%;
-        height: 100%;
+    Dialog {
+        open <=> root.showing_text_modal;
+        title: "Send Text to Device";
+        show-close-button: false;
 
-        // Block clicks to components below
-        clicked => {
+        dismissed => {
+            root.text_to_send = "";
+            root.showing_text_modal = false;
         }
 
-        Rectangle {
-            background: rgba(0, 0, 0, 0.6);
+        VerticalLayout {
+            padding-top: 10px;
+            spacing: 16px;
 
-            // Modal Dialog container
-            Rectangle {
-                width: 320px;
-                height: modal_layout.preferred-height;
-                background: Theme.surface;
-                border-radius: 16px;
-                border-width: 1px;
-                border-color: Theme.surface-hover;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+            HorizontalLayout {
+                alignment: end;
+                // Icon button for pasting from clipboard
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    background: paste_touch.has-hover ? Theme.surface-hover : transparent;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: paste_touch.has-hover ? Theme.secondary : transparent;
 
-                drop-shadow-color: rgba(0, 0, 0, 0.5);
-                drop-shadow-blur: 24px;
+                    animate background { duration: 150ms; }
+                    animate border-color { duration: 150ms; }
 
-                modal_layout := VerticalLayout {
-                    padding: 20px;
-                    spacing: 16px;
-
-                    HorizontalLayout {
-                        alignment: space-between;
-                        Text {
-                            text: "Send Text to Device";
-                            font-size: 16px;
-                            font-weight: 800;
-                            color: Theme.text-primary;
-                            vertical-alignment: center;
-                        }
-
-                        // Icon button for pasting from clipboard
-                        Rectangle {
-                            width: 32px;
-                            height: 32px;
-                            background: paste_touch.has-hover ? Theme.surface-hover : transparent;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: paste_touch.has-hover ? Theme.secondary : transparent;
-
-                            animate background { duration: 150ms; }
-                            animate border-color { duration: 150ms; }
-
-                            Image {
-                                source: @image-url("icons/clipboard.svg");
-                                width: 18px;
-                                height: 18px;
-                                colorize: paste_touch.has-hover ? Theme.secondary : Theme.text-secondary;
-                                animate colorize { duration: 150ms; }
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                            }
-
-                            paste_touch := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.text_to_send = Logic.paste_from_clipboard();
-                                }
-                            }
-                        }
+                    Image {
+                        source: @image-url("icons/clipboard.svg");
+                        width: 18px;
+                        height: 18px;
+                        colorize: paste_touch.has-hover ? Theme.secondary : Theme.text-secondary;
+                        animate colorize { duration: 150ms; }
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
                     }
 
-                    text_input := Textarea {
-                        placeholder: "Type or paste your text here...";
-                        text <=> root.text_to_send;
-                        preferred-height: 160px;
-                    }
-
-                    HorizontalLayout {
-                        spacing: 12px;
-
-                        ZenButton {
-                            text: "Cancel";
-                            primary: false;
-                            horizontal-stretch: 1;
-                            clicked => {
-                                showing_text_modal = false;
-                                root.text_to_send = "";
-                            }
+                    paste_touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.text_to_send = Logic.paste_from_clipboard();
                         }
+                    }
+                }
+            }
 
-                        ZenButton {
-                            text: "Send";
-                            primary: true;
-                            horizontal-stretch: 1;
-                            clicked => {
-                                if root.text_to_send != "" {
-                                    if is_direct_connect {
-                                        Logic.send_text_direct(AppData.direct_ip, root.text_to_send);
-                                    } else {
-                                        Logic.send_text_to_device(selected_device, root.text_to_send);
-                                    }
-                                    showing_text_modal = false;
-                                    root.text_to_send = "";
-                                }
+            text_input := Textarea {
+                placeholder: "Type or paste your text here...";
+                text <=> root.text_to_send;
+                preferred-height: 160px;
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                ZenButton {
+                    text: "Cancel";
+                    primary: false;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        showing_text_modal = false;
+                        root.text_to_send = "";
+                    }
+                }
+
+                ZenButton {
+                    text: "Send";
+                    primary: true;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        if root.text_to_send != "" {
+                            if is_direct_connect {
+                                Logic.send_text_direct(AppData.direct_ip, root.text_to_send);
+                            } else {
+                                Logic.send_text_to_device(selected_device, root.text_to_send);
                             }
+                            showing_text_modal = false;
+                            root.text_to_send = "";
                         }
                     }
                 }

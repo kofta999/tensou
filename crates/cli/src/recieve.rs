@@ -26,12 +26,14 @@ impl TransferObserver for CliReceiveTransfer {
         transfer_id: u32,
         _peer: SocketAddr,
         total_bytes: u64,
+        bytes_done: u64,
         job_name: &str,
         _cancel_token: CancellationToken,
     ) {
         let pb = self
             .multi_progress
             .add(create_transfer_pb(total_bytes, job_name, false));
+        pb.set_position(bytes_done);
         self.active.lock().unwrap().insert(transfer_id, pb);
     }
 
@@ -104,6 +106,8 @@ pub async fn run(port: u16, output: Option<PathBuf>) -> anyhow::Result<()> {
     println!("Saving files to: {}", target_dir.display());
     println!("   Waiting for incoming transfers...\n");
 
+    let (_reload_tx, reload_rx) = tokio::sync::mpsc::channel::<()>(1);
+
     daemon
         .run(
             Arc::new(CliConsent),
@@ -112,6 +116,7 @@ pub async fn run(port: u16, output: Option<PathBuf>) -> anyhow::Result<()> {
                 active: Mutex::new(HashMap::new()),
             }),
             cancel_token,
+            reload_rx,
         )
         .await;
 

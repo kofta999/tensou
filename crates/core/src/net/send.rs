@@ -2,7 +2,7 @@ use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     crypto::SkipServerVerification,
     disk::SendSession,
-    protocol::{ManifestManager, State, TransferObserver, TransferRequest},
+    protocol::{self, State, TransferObserver, TransferRequest},
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{
@@ -42,11 +42,11 @@ impl Sender {
 
         let (request, sessions) = match send_type {
             SendType::Single(path) => {
-                let res = ManifestManager::build(path)?;
+                let res = protocol::manifest::build(path)?;
                 (TransferRequest::File(res.0), Some(res.1))
             }
             SendType::Multiple(paths) => {
-                let res = ManifestManager::build_multiple(paths)?;
+                let res = protocol::manifest::build_multiple(paths)?;
                 (TransferRequest::File(res.0), Some(res.1))
             }
             SendType::Text {
@@ -123,6 +123,15 @@ impl Sender {
             }
         }
         total
+    }
+
+    pub fn get_total_bytes(&self) -> u64 {
+        self.sessions.values().map(|s| s.get_metadata().size).sum()
+    }
+
+    pub fn get_bytes_done(&self) -> u64 {
+        self.get_total_bytes()
+            .saturating_sub(self.get_remaining_bytes())
     }
 
     pub async fn process_chunks(self, observer: Arc<dyn TransferObserver>) -> anyhow::Result<()> {
