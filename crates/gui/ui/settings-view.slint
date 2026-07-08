@@ -6,7 +6,7 @@ import { Theme, AppData, Logic } from "globals.slint";
 export component SettingsView inherits Rectangle {
     ScrollView {
         vertical-stretch: 1;
-        
+
         VerticalLayout {
             padding: 24px;
             spacing: 24px;
@@ -22,7 +22,7 @@ export component SettingsView inherits Rectangle {
             // Section 1: Device Identity
             VerticalLayout {
                 spacing: 12px;
-                
+
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
@@ -33,6 +33,7 @@ export component SettingsView inherits Rectangle {
                         colorize: Theme.text-secondary;
                         y: (parent.height - self.height) / 2;
                     }
+
                     Text {
                         text: "Device Identity";
                         font-size: 14px;
@@ -57,7 +58,17 @@ export component SettingsView inherits Rectangle {
                             alignment: start;
 
                             Image {
-                                source: AppData.os_type == "linux" ? @image-url("icons/linux.svg") : (AppData.os_type == "windows" ? @image-url("icons/windows.svg") : (AppData.os_type == "macos" ? @image-url("icons/macos.svg") : @image-url("icons/linux.svg")));
+                                source: {
+                                    if (AppData.os_type == OperatingSystemType.linux) {
+                                        @image-url("icons/linux.svg")
+                                    } else if (AppData.os_type == OperatingSystemType.windows) {
+                                        @image-url("icons/windows.svg")
+                                    } else if (AppData.os_type == OperatingSystemType.macos) {
+                                        @image-url("icons/macos.svg")
+                                    } else {
+                                        @image-url("icons/linux.svg")
+                                    }
+                                }
                                 width: 24px;
                                 height: 24px;
                                 colorize: Theme.secondary;
@@ -108,7 +119,7 @@ export component SettingsView inherits Rectangle {
             // Section 2: Network & Transfers
             VerticalLayout {
                 spacing: 12px;
-                
+
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
@@ -119,6 +130,7 @@ export component SettingsView inherits Rectangle {
                         colorize: Theme.text-secondary;
                         y: (parent.height - self.height) / 2;
                     }
+
                     Text {
                         text: "Network & Transfers";
                         font-size: 14px;
@@ -229,7 +241,7 @@ export component SettingsView inherits Rectangle {
             // Section 3: Storage
             VerticalLayout {
                 spacing: 12px;
-                
+
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
@@ -240,6 +252,7 @@ export component SettingsView inherits Rectangle {
                         colorize: Theme.text-secondary;
                         y: (parent.height - self.height) / 2;
                     }
+
                     Text {
                         text: "Storage";
                         font-size: 14px;
@@ -285,7 +298,8 @@ export component SettingsView inherits Rectangle {
                         }
 
                         ZenButton {
-                            text: "📁 Change Location";
+                            text: "Change Location";
+                            icon: @image-url("icons/folder.svg");
                             primary: false;
                             height: 36px;
                             clicked => {
@@ -299,7 +313,7 @@ export component SettingsView inherits Rectangle {
             // Section 4: Theme Appearance
             VerticalLayout {
                 spacing: 12px;
-                
+
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
@@ -310,6 +324,7 @@ export component SettingsView inherits Rectangle {
                         colorize: Theme.text-secondary;
                         y: (parent.height - self.height) / 2;
                     }
+
                     Text {
                         text: "Appearance";
                         font-size: 14px;
