@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tensou_core::SERVER_PORT;
 use tensou_core::config::Config;
 use tensou_core::net;
 use tokio::sync::mpsc;
@@ -21,6 +22,7 @@ pub fn setup(
     config: Arc<Mutex<Config>>,
     local_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
     local_completed_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
+    reload_tx: mpsc::Sender<()>,
 ) {
     let direct_ip = Arc::new(std::sync::Mutex::new(String::new()));
 
@@ -117,10 +119,12 @@ pub fn setup(
     // Update Display Name
     main_window.global::<Logic>().on_update_display_name({
         let config = config.clone();
+        let reload_tx = reload_tx.clone();
         move |name| {
             let mut cfg = config.lock().unwrap();
             cfg.display_name = name.to_string();
             let _ = cfg.save();
+            let _ = reload_tx.try_send(());
         }
     });
 
@@ -186,18 +190,59 @@ pub fn setup(
             }
         });
 
-    // Device Send Dropped File (No-op stub for now)
+    // Device Send Dropped File
     main_window.global::<Logic>().on_device_send_dropped_file({
-        move |_dev, _data_transfer| {
-            dbg!(_dev, _data_transfer);
-            // No-op
+        let event_tx = event_tx.clone();
+        move |dev, data_transfer| {
+            if let Ok(text) = data_transfer.plain_text() {
+                let mut paths = Vec::new();
+                for line in text.lines() {
+                    let line = line.trim();
+                    if let Some(path_str) = line.strip_prefix("file://") {
+                        if let Ok(decoded) = urlencoding::decode(path_str) {
+                            paths.push(PathBuf::from(decoded.into_owned()));
+                        }
+                    } else if !line.is_empty() {
+                        paths.push(PathBuf::from(line));
+                    }
+                }
+                if !paths.is_empty() {
+                    let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
+                    send_file_background(event_tx.clone(), target_addr, paths);
+                }
+            }
         }
     });
 
-    // Direct Send Dropped File (No-op stub for now)
+    // Direct Send Dropped File
     main_window.global::<Logic>().on_direct_send_dropped_file({
-        move |_ip, _data_transfer| {
-            // No-op
+        let event_tx = event_tx.clone();
+        move |ip_str, data_transfer| {
+            if let Ok(text) = data_transfer.plain_text() {
+                let mut paths = Vec::new();
+                for line in text.lines() {
+                    let line = line.trim();
+                    if let Some(path_str) = line.strip_prefix("file://") {
+                        if let Ok(decoded) = urlencoding::decode(path_str) {
+                            paths.push(PathBuf::from(decoded.into_owned()));
+                        }
+                    } else if !line.is_empty() {
+                        paths.push(PathBuf::from(line));
+                    }
+                }
+                if !paths.is_empty() {
+                    let ip_str = ip_str.to_string();
+                    let target_addr: Result<SocketAddr, _> = if ip_str.contains(':') {
+                        ip_str.parse()
+                    } else {
+                        format!("{}:{}", ip_str, SERVER_PORT).parse()
+                    };
+
+                    if let Ok(target_addr) = target_addr {
+                        send_file_background(event_tx.clone(), target_addr, paths);
+                    }
+                }
+            }
         }
     });
 
@@ -323,15 +368,18 @@ fn send_file_background(
                     .parent()
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| paths[0].clone());
-                let total_bytes = client.get_remaining_bytes();
+                let total_bytes = client.get_total_bytes();
+                let bytes_done = client.get_bytes_done();
 
                 let _ = tx_clone.send(GuiEvent::TransferStarted {
                     transfer_id,
                     is_sender: true,
                     job_name,
                     total_bytes,
+                    bytes_done,
                     cancel_token: client.cancel_token.clone(),
                     local_dir: local_dir.clone(),
+                    peer_ip: target_addr.ip().to_string(),
                 });
 
                 let observer = std::sync::Arc::new(crate::state::GuiTransferObserver {

@@ -125,6 +125,15 @@ impl Sender {
         total
     }
 
+    pub fn get_total_bytes(&self) -> u64 {
+        self.sessions.values().map(|s| s.get_metadata().size).sum()
+    }
+
+    pub fn get_bytes_done(&self) -> u64 {
+        self.get_total_bytes()
+            .saturating_sub(self.get_remaining_bytes())
+    }
+
     pub async fn process_chunks(self, observer: Arc<dyn TransferObserver>) -> anyhow::Result<()> {
         let task_list = self.flatten();
         let chunk_count = task_list.len();

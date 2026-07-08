@@ -120,9 +120,11 @@ pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result
     let client = Sender::connect(selected_addr, SendType::Single(&path), cancel_token)
         .await?
         .unwrap();
-    let total_bytes = client.get_remaining_bytes();
+    let total_bytes = client.get_total_bytes();
+    let bytes_done = client.get_bytes_done();
 
     let pb = create_transfer_pb(total_bytes, &display_name, true);
+    pb.set_position(bytes_done);
 
     let transfer_handle =
         tokio::spawn(async move { client.process_chunks(Arc::new(CliSendTransfer(pb))).await });

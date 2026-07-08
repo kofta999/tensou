@@ -13,8 +13,8 @@ use tokio::sync::mpsc;
 pub fn spawn_discovery(
     main_window_weak: &Weak<MainWindow>,
     mut devices_rx: mpsc::Receiver<DiscoveryEvent>,
+    local_devices: Arc<Mutex<Vec<GuiDevice>>>,
 ) {
-    let local_devices = Arc::new(std::sync::Mutex::new(Vec::<GuiDevice>::new()));
     let main_window_weak_devices = main_window_weak.clone();
     tokio::spawn(async move {
         while let Some(event) = devices_rx.recv().await {
@@ -80,6 +80,7 @@ pub fn spawn_transfers(
     local_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
     local_completed_transfers: Arc<Mutex<Vec<GuiTransfer>>>,
     mut event_rx: mpsc::UnboundedReceiver<GuiEvent>,
+    local_devices: Arc<Mutex<Vec<GuiDevice>>>,
 ) {
     let local_transfers_clone = local_transfers.clone();
     let local_completed_transfers_clone = local_completed_transfers.clone();
@@ -109,22 +110,40 @@ pub fn spawn_transfers(
                             is_sender,
                             job_name,
                             total_bytes,
+                            bytes_done,
                             cancel_token,
                             local_dir,
+                            peer_ip,
                         } => {
+                            let peer_name = {
+                                let devices = local_devices.lock().unwrap();
+                                let clean_peer_ip = peer_ip.split(':').next().unwrap_or(&peer_ip);
+                                devices
+                                    .iter()
+                                    .find(|d| {
+                                        let clean_dev_ip = d.ip.split(':').next().unwrap_or(&d.ip);
+                                        clean_dev_ip == clean_peer_ip
+                                    })
+                                    .map(|d| d.display_name.clone())
+                                    .unwrap_or_else(|| peer_ip.clone())
+                            };
+
                             transfers.push(GuiTransfer {
                                 id: transfer_id,
                                 is_sender,
                                 job_name,
                                 total_bytes,
-                                bytes_transferred: 0,
+                                bytes_transferred: bytes_done,
+                                bytes_done_at_start: bytes_done,
                                 start_time: std::time::Instant::now(),
                                 cancel_token,
                                 local_dir,
                                 status: "Active".to_string(),
+                                timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                                peer_name,
                             });
                             active_dirty = true;
-                            completed_dirty = true; // Refresh lists in case
+                            completed_dirty = true;
                         }
                         GuiEvent::ChunkTransferred { transfer_id, bytes } => {
                             if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
@@ -224,8 +243,9 @@ pub fn spawn_transfers(
                             Some(transfers
                                 .iter()
                                 .map(|t| {
-                                    let trans_mb = t.bytes_transferred as f64 / 1_048_576.0;
+                                     let trans_mb = t.bytes_transferred as f64 / 1_048_576.0;
                                     let total_mb = t.total_bytes as f64 / 1_048_576.0;
+                                    let remaining = t.total_bytes.saturating_sub(t.bytes_transferred);
 
                                     let progress = if t.total_bytes > 0 {
                                         t.bytes_transferred as f32 / t.total_bytes as f32
@@ -233,16 +253,24 @@ pub fn spawn_transfers(
                                         0.0
                                     };
 
+                                    // Speed is derived from newly transferred bytes only (not resumed portion)
                                     let elapsed = t.start_time.elapsed().as_secs_f64();
-                                    let speed_eta = if elapsed > 0.0 && t.bytes_transferred > 0 {
-                                        let speed = t.bytes_transferred as f64 / elapsed; // bytes/sec
+                                    let new_bytes = t.bytes_transferred.saturating_sub(t.bytes_done_at_start);
+                                    let speed_eta = if elapsed > 0.0 && new_bytes > 0 {
+                                        let speed = new_bytes as f64 / elapsed;
                                         let speed_mb = speed / 1_048_576.0;
-
-                                        let remaining = t.total_bytes.saturating_sub(t.bytes_transferred);
                                         let eta = remaining as f64 / speed;
                                         format!("{:.1} MB/s | ETA: {:.0}s", speed_mb, eta)
                                     } else {
                                         "Waiting...".to_string()
+                                    };
+
+                                    let bytes_label = if t.bytes_done_at_start > 0 {
+                                        format!("{:.1} / {:.1} MB (+{:.1} MB resumed)",
+                                            trans_mb, total_mb,
+                                            t.bytes_done_at_start as f64 / 1_048_576.0)
+                                    } else {
+                                        format!("{:.1} / {:.1} MB", trans_mb, total_mb)
                                     };
 
                                     Transfer {
@@ -250,9 +278,11 @@ pub fn spawn_transfers(
                                         is_sender: t.is_sender,
                                         job_name: t.job_name.clone().into(),
                                         total_bytes: format!("{:.1} MB", total_mb).into(),
-                                        bytes_transferred: format!("{:.1} MB", trans_mb).into(),
+                                        bytes_transferred: bytes_label.into(),
                                         progress,
                                         speed_eta: speed_eta.into(),
+                                        timestamp: t.timestamp.clone().into(),
+                                        peer_name: t.peer_name.clone().into(),
                                     }
                                 })
                                 .collect::<Vec<Transfer>>())
@@ -274,6 +304,8 @@ pub fn spawn_transfers(
                                         bytes_transferred: format!("{:.1} MB", total_mb).into(),
                                         progress: 1.0,
                                         speed_eta: t.status.clone().into(),
+                                        timestamp: t.timestamp.clone().into(),
+                                        peer_name: t.peer_name.clone().into(),
                                     }
                                 })
                                 .collect::<Vec<Transfer>>())
