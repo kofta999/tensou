@@ -1,5 +1,3 @@
-use std::path::{Component, Path};
-
 pub const SERVER_PORT: u16 = 6967;
 pub const CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 pub const MAX_METADATA_SIZE: u64 = 64 * 1024 * 1024;
@@ -26,7 +24,4 @@ pub mod discovery;
 pub mod disk;
 pub mod net;
 pub mod protocol;
-
-pub fn is_safe_relative_path(path: &Path) -> bool {
-    path.components().all(|c| matches!(c, Component::Normal(_)))
-}
+pub mod util;

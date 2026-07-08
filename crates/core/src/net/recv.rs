@@ -5,8 +5,7 @@ use crate::{
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
     protocol::{
-        ChunkHeader, ChunkPacket, ManifestManager, TransferConsentHandler, TransferObserver,
-        TransferRequest,
+        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferObserver, TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -289,7 +288,7 @@ impl PendingTransfer {
 
                 let target_dir_clone = target_dir.to_path_buf();
                 let (instructions, staging) = tokio::task::spawn_blocking(move || {
-                    ManifestManager::parse(manifest, &target_dir_clone, overwrite)
+                    protocol::manifest::parse(manifest, &target_dir_clone, overwrite)
                 })
                 .await??;
 
