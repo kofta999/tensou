@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tensou_core::config::Config;
 use tensou_core::net;
+use tensou_core::protocol::SenderInfo;
 use tensou_core::util::generate_job_name;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -37,13 +38,15 @@ pub fn setup(
     // Direct Send File
     main_window.global::<Logic>().on_direct_send_file({
         let event_tx = event_tx.clone();
+        let config = config.clone();
         move |ip_str| {
             if let Ok(target_addr) = ip_str.parse::<SocketAddr>() {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title("Select File to Send")
                     .pick_files()
                 {
-                    send_file_background(event_tx.clone(), target_addr, path);
+                    let sender_info = SenderInfo::from(&*config.lock().unwrap());
+                    send_file_background(event_tx.clone(), target_addr, sender_info, path);
                 }
             } else {
                 log::warn!("Invalid target IP address");
@@ -54,13 +57,15 @@ pub fn setup(
     // Direct Send Folder
     main_window.global::<Logic>().on_direct_send_folder({
         let event_tx = event_tx.clone();
+        let config = config.clone();
         move |ip_str| {
             if let Ok(target_addr) = ip_str.parse::<SocketAddr>() {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title("Select Folder to Send")
                     .pick_folders()
                 {
-                    send_file_background(event_tx.clone(), target_addr, path);
+                    let sender_info = SenderInfo::from(&*config.lock().unwrap());
+                    send_file_background(event_tx.clone(), target_addr, sender_info, path);
                 }
             } else {
                 log::warn!("Invalid target IP address");
@@ -71,13 +76,15 @@ pub fn setup(
     // Device Send File
     main_window.global::<Logic>().on_device_send_file({
         let event_tx = event_tx.clone();
+        let config = config.clone();
         move |dev| {
             let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
             if let Some(path) = rfd::FileDialog::new()
                 .set_title("Select File to Send")
                 .pick_files()
             {
-                send_file_background(event_tx.clone(), target_addr, path);
+                let sender_info = SenderInfo::from(&*config.lock().unwrap());
+                send_file_background(event_tx.clone(), target_addr, sender_info, path);
             }
         }
     });
@@ -85,13 +92,15 @@ pub fn setup(
     // Device Send Folder
     main_window.global::<Logic>().on_device_send_folder({
         let event_tx = event_tx.clone();
+        let config = config.clone();
         move |dev| {
             let target_addr = SocketAddr::new(dev.ip.parse().unwrap(), dev.port as u16);
             if let Some(path) = rfd::FileDialog::new()
                 .set_title("Select Folder to Send")
                 .pick_folders()
             {
-                send_file_background(event_tx.clone(), target_addr, path);
+                let sender_info = SenderInfo::from(&*config.lock().unwrap());
+                send_file_background(event_tx.clone(), target_addr, sender_info, path);
             }
         }
     });
@@ -260,14 +269,17 @@ pub fn setup(
         move |dev, text| {
             if let Ok(target_addr) = format!("{}:{}", dev.ip, dev.port).parse::<SocketAddr>() {
                 let text_content = text.to_string();
-                let device_name = config.lock().unwrap().display_name.clone();
+                let sender_info = SenderInfo::from(&*config.lock().unwrap());
+
                 tokio::spawn(async move {
-                    let send_type = net::SendType::Text {
-                        device_name,
-                        content: text_content,
-                    };
-                    if let Err(e) =
-                        net::Sender::connect(target_addr, send_type, CancellationToken::new()).await
+                    let send_type = net::SendType::Text(text_content);
+                    if let Err(e) = net::Sender::connect(
+                        target_addr,
+                        send_type,
+                        sender_info,
+                        CancellationToken::new(),
+                    )
+                    .await
                     {
                         log::error!("Failed to send text to device: {e}");
                     }
@@ -289,14 +301,16 @@ pub fn setup(
 
             if let Ok(target_addr) = target_addr {
                 let text_content = text.to_string();
-                let device_name = config.lock().unwrap().display_name.clone();
+                let sender_info = SenderInfo::from(&*config.lock().unwrap());
                 tokio::spawn(async move {
-                    let send_type = net::SendType::Text {
-                        device_name,
-                        content: text_content,
-                    };
-                    if let Err(e) =
-                        net::Sender::connect(target_addr, send_type, CancellationToken::new()).await
+                    let send_type = net::SendType::Text(text_content);
+                    if let Err(e) = net::Sender::connect(
+                        target_addr,
+                        send_type,
+                        sender_info,
+                        CancellationToken::new(),
+                    )
+                    .await
                     {
                         log::error!("Failed to send text direct: {e}");
                     }
@@ -341,6 +355,7 @@ pub fn setup(
 fn send_file_background(
     event_tx: mpsc::UnboundedSender<GuiEvent>,
     target_addr: SocketAddr,
+    sender_info: SenderInfo,
     paths: Vec<PathBuf>,
 ) {
     let transfer_id = rand::random::<u32>();
@@ -352,6 +367,7 @@ fn send_file_background(
         match net::Sender::connect(
             target_addr,
             net::SendType::Files(&paths),
+            sender_info,
             CancellationToken::new(),
         )
         .await

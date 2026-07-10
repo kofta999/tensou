@@ -32,6 +32,13 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
         }
     }
 
+    let config = Config::load_or_create();
+    let sender_info = tensou_core::protocol::SenderInfo {
+        display_name: config.display_name.clone(),
+        device_uuid: config.device_uuid.clone(),
+        os_type: config.os_type.clone(),
+    };
+
     let display_name = util::generate_job_name(&paths);
 
     println!("Preparing to send: {display_name}");
@@ -49,10 +56,10 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
             spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
             let (tx, mut rx) = mpsc::channel::<DiscoveryEvent>(10);
-            let config = Config::load_or_create();
+            let config_clone = config.clone();
 
             tokio::spawn(async move {
-                let _ = discovery::scan_for_receivers(tx, &config.device_uuid).await;
+                let _ = discovery::scan_for_receivers(tx, &config_clone.device_uuid).await;
             });
 
             let mut devices = Vec::new();
@@ -116,9 +123,14 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
         cancel_clone.cancel();
     });
 
-    let client = Sender::connect(selected_addr, SendType::Files(&paths), cancel_token)
-        .await?
-        .unwrap();
+    let client = Sender::connect(
+        selected_addr,
+        SendType::Files(&paths),
+        sender_info,
+        cancel_token,
+    )
+    .await?
+    .unwrap();
     let total_bytes = client.get_total_bytes();
     let bytes_done = client.get_bytes_done();
 

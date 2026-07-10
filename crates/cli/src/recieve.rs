@@ -10,7 +10,7 @@ use std::{
 use tensou_core::{
     config::Config,
     net::ReceiverDaemon,
-    protocol::{TransferConsentHandler, TransferObserver},
+    protocol::{SenderInfo, TransferConsentHandler, TransferObserver},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -67,10 +67,19 @@ struct CliConsent;
 
 #[async_trait]
 impl TransferConsentHandler for CliConsent {
-    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
+    async fn request_consent(
+        &self,
+        peer: SocketAddr,
+        sender_info: &SenderInfo,
+        job_name: &str,
+    ) -> bool {
         let job_name = job_name.to_string();
+        let sender_info = sender_info.clone();
         tokio::task::spawn_blocking(move || {
-            println!("\nIncoming transfer from {peer}");
+            println!(
+                "\nIncoming transfer from {} ({})",
+                sender_info.display_name, peer
+            );
             dialoguer::Confirm::new()
                 .with_prompt(format!("Accept '{job_name}'?"))
                 .interact()

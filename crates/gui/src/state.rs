@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tensou_core::discovery::DiscoveredDevice;
-use tensou_core::protocol::{TransferConsentHandler, TransferObserver};
+use tensou_core::protocol::{SenderInfo, TransferConsentHandler, TransferObserver};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -109,6 +109,7 @@ pub enum GuiEvent {
     IncomingConsentRequest {
         transfer_id: u32,
         peer: SocketAddr,
+        sender: SenderInfo,
         job_name: String,
     },
     TextReceived {
@@ -235,7 +236,7 @@ pub struct GuiConsentHandler {
 
 #[async_trait]
 impl TransferConsentHandler for GuiConsentHandler {
-    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool {
+    async fn request_consent(&self, peer: SocketAddr, sender: &SenderInfo, job_name: &str) -> bool {
         let transfer_id = rand::random::<u32>();
         let (tx, rx) = oneshot::channel();
 
@@ -253,6 +254,7 @@ impl TransferConsentHandler for GuiConsentHandler {
         let _ = self.event_tx.send(GuiEvent::IncomingConsentRequest {
             transfer_id,
             peer,
+            sender: sender.clone(),
             job_name: job_name.to_string(),
         });
 

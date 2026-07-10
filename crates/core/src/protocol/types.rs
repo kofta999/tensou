@@ -6,19 +6,22 @@ use std::{fs, net::SocketAddr, path::Path};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TransferRequest {
-    File(Manifest),
-    Text {
-        device_name: String,
-        content: String,
-    },
+pub struct TransferRequest {
+    pub payload: TransferPayload,
+    pub sender: SenderInfo,
 }
 
-impl TransferRequest {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransferPayload {
+    File(Manifest),
+    Text(String),
+}
+
+impl TransferPayload {
     pub fn job_name(&self) -> &str {
         match self {
-            TransferRequest::File(manifest) => &manifest.job_name,
-            TransferRequest::Text { .. } => "Clipboard Text",
+            TransferPayload::File(manifest) => &manifest.job_name,
+            TransferPayload::Text { .. } => "Clipboard Text",
         }
     }
 }
@@ -164,6 +167,23 @@ impl JobInstruction {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SenderInfo {
+    pub display_name: String,
+    pub device_uuid: String,
+    pub os_type: String,
+}
+
+impl From<&crate::config::Config> for SenderInfo {
+    fn from(config: &crate::config::Config) -> Self {
+        Self {
+            display_name: config.display_name.clone(),
+            device_uuid: config.device_uuid.clone(),
+            os_type: config.os_type.clone(),
+        }
+    }
+}
+
 pub trait TransferObserver: Send + Sync {
     fn on_transfer_started(
         &self,
@@ -184,5 +204,10 @@ pub trait TransferObserver: Send + Sync {
 
 #[async_trait]
 pub trait TransferConsentHandler: Send + Sync {
-    async fn request_consent(&self, peer: SocketAddr, job_name: &str) -> bool;
+    async fn request_consent(
+        &self,
+        peer: SocketAddr,
+        sender_info: &SenderInfo,
+        job_name: &str,
+    ) -> bool;
 }

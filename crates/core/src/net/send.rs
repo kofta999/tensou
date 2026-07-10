@@ -2,7 +2,7 @@ use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
     crypto::SkipServerVerification,
     disk::SendSession,
-    protocol::{self, State, TransferObserver, TransferRequest},
+    protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
@@ -20,16 +20,14 @@ pub struct Sender {
 #[derive(Debug)]
 pub enum SendType<'a> {
     Files(&'a [PathBuf]),
-    Text {
-        device_name: String,
-        content: String,
-    },
+    Text(String),
 }
 
 impl Sender {
     pub async fn connect(
         server_addr: SocketAddr,
         send_type: SendType<'_>,
+        sender_info: SenderInfo,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Option<Self>> {
         log::info!("Preparing transfer manifest for: {:?}", send_type);
@@ -37,15 +35,18 @@ impl Sender {
         let (request, sessions) = match send_type {
             SendType::Files(paths) => {
                 let res = protocol::manifest::build(paths)?;
-                (TransferRequest::File(res.0), Some(res.1))
+                (
+                    TransferRequest {
+                        payload: TransferPayload::File(res.0),
+                        sender: sender_info,
+                    },
+                    Some(res.1),
+                )
             }
-            SendType::Text {
-                device_name,
-                content,
-            } => (
-                TransferRequest::Text {
-                    device_name,
-                    content,
+            SendType::Text(content) => (
+                TransferRequest {
+                    payload: TransferPayload::Text(content),
+                    sender: sender_info,
                 },
                 None,
             ),

@@ -5,7 +5,8 @@ use crate::{
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
     protocol::{
-        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferObserver, TransferRequest,
+        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferObserver, TransferPayload,
+        TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -120,7 +121,7 @@ impl ReceiverDaemon {
                                 true
                             } else {
                                 consent_clone
-                                    .request_consent(peer, pending.request.job_name())
+                                    .request_consent(peer, &pending.request.sender, pending.request.payload.job_name())
                                     .await
                             };
 
@@ -282,8 +283,8 @@ impl PendingTransfer {
         cancel_token: CancellationToken,
         overwrite: bool,
     ) -> anyhow::Result<AcceptResult> {
-        match self.request {
-            TransferRequest::File(manifest) => {
+        match self.request.payload {
+            TransferPayload::File(manifest) => {
                 let job_name = manifest.job_name.clone();
 
                 let target_dir_clone = target_dir.to_path_buf();
@@ -350,13 +351,14 @@ impl PendingTransfer {
                     staging: staging.clone(),
                 }))
             }
-            TransferRequest::Text {
-                device_name,
-                content,
-            } => {
+            TransferPayload::Text(content) => {
                 self.send_stream.write_u8(1).await?;
                 self.send_stream.finish()?;
-                observer.on_text_received(self.connection.remote_address(), device_name, content);
+                observer.on_text_received(
+                    self.connection.remote_address(),
+                    self.request.sender.display_name,
+                    content,
+                );
                 Ok(AcceptResult::Text)
             }
         }

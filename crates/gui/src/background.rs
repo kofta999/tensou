@@ -92,7 +92,7 @@ pub fn spawn_transfers(
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut active_dirty = false;
         let mut completed_dirty = false;
-        let mut consent_to_set = None; // (has_consent, transfer_id, peer_ip, job_name)
+        let mut consent_to_set = None; // (has_consent, transfer_id, peer_ip, sender_info, job_name)
 
         loop {
             tokio::select! {
@@ -231,9 +231,10 @@ pub fn spawn_transfers(
                         GuiEvent::IncomingConsentRequest {
                             transfer_id,
                             peer,
+                            sender,
                             job_name,
                         } => {
-                            consent_to_set = Some((true, transfer_id, peer.ip().to_string(), job_name));
+                            consent_to_set = Some((true, transfer_id, peer.ip().to_string(), sender, job_name));
                             active_dirty = true; // Refresh to show consent modal
                         }
                     }
@@ -350,31 +351,14 @@ pub fn spawn_transfers(
                                 }
                             }
 
-                            if let Some((has_req, id, ip, name)) = consent_data {
+                            if let Some((has_req, id, ip, sender, name)) = consent_data {
                                 ui.global::<AppData>().set_has_consent_request(has_req);
-
-                                // Resolve device name and OS from mDNS devices list
-                                let devices = ui.global::<AppData>().get_devices();
-                                let mut resolved_name = String::new();
-                                let mut resolved_os = String::new();
-
-                                for i in 0..devices.row_count() {
-                                    if let Some(dev) = devices.row_data(i) {
-                                        let clean_peer_ip = ip.split(':').next().unwrap_or(&ip);
-                                        let clean_dev_ip = dev.ip.as_str().split(':').next().unwrap_or(dev.ip.as_str());
-                                        if clean_peer_ip == clean_dev_ip {
-                                            resolved_name = dev.display_name.to_string();
-                                            resolved_os = dev.os_type.to_string();
-                                            break;
-                                        }
-                                    }
-                                }
 
                                 let consent_req = ConsentRequest {
                                     transfer_id: id as i32,
                                     peer_ip: ip.clone().into(),
-                                    device_name: resolved_name.into(),
-                                    device_os: resolved_os.into(),
+                                    device_name: sender.display_name.into(),
+                                    device_os: sender.os_type.into(),
                                     job_name: name.into(),
                                 };
                                 ui.global::<AppData>().set_consent_request(consent_req);

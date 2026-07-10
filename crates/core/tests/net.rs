@@ -6,6 +6,7 @@ use tensou_core::config::Config;
 use tensou_core::net::ReceiverDaemon;
 use tensou_core::net::SendType;
 use tensou_core::net::Sender;
+use tensou_core::protocol::SenderInfo;
 use tensou_core::protocol::TransferConsentHandler;
 use tensou_core::protocol::TransferObserver;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +19,12 @@ struct AutoAccept;
 
 #[async_trait]
 impl TransferConsentHandler for AutoAccept {
-    async fn request_consent(&self, _peer: SocketAddr, _job_name: &str) -> bool {
+    async fn request_consent(
+        &self,
+        _peer: SocketAddr,
+        _sender_info: &SenderInfo,
+        _job_name: &str,
+    ) -> bool {
         true
     }
 }
@@ -27,8 +33,21 @@ struct AutoReject;
 
 #[async_trait]
 impl TransferConsentHandler for AutoReject {
-    async fn request_consent(&self, _peer: SocketAddr, _job_name: &str) -> bool {
+    async fn request_consent(
+        &self,
+        _peer: SocketAddr,
+        _sender_info: &SenderInfo,
+        _job_name: &str,
+    ) -> bool {
         false
+    }
+}
+
+fn make_sender_info() -> SenderInfo {
+    SenderInfo {
+        display_name: "TestSender".to_string(),
+        device_uuid: "test-uuid-123".to_string(),
+        os_type: "linux".to_string(),
     }
 }
 
@@ -84,6 +103,7 @@ async fn test_full_network_transfer() -> anyhow::Result<()> {
     let client = Sender::connect(
         addr,
         SendType::Files(&[source_path.clone()]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await?
@@ -132,6 +152,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
     let client_1 = Sender::connect(
         addr,
         SendType::Files(&[source_path_1.clone()]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await?
@@ -142,6 +163,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
     let client_2 = Sender::connect(
         addr,
         SendType::Files(&[source_path_2_named_same.clone()]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await?
@@ -182,6 +204,7 @@ async fn test_transfer_rejected() -> anyhow::Result<()> {
     let result = Sender::connect(
         addr,
         SendType::Files(&[source_path]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await;
@@ -218,6 +241,7 @@ async fn test_directory_transfer() -> anyhow::Result<()> {
     let client = Sender::connect(
         addr,
         SendType::Files(&[job_dir.clone()]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await?
@@ -264,9 +288,14 @@ async fn test_sender_cancel_leaves_partial_files() -> anyhow::Result<()> {
 
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
-    let client = Sender::connect(addr, SendType::Files(&[source_path]), cancel.clone())
-        .await?
-        .unwrap();
+    let client = Sender::connect(
+        addr,
+        SendType::Files(&[source_path]),
+        make_sender_info(),
+        cancel.clone(),
+    )
+    .await?
+    .unwrap();
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -317,6 +346,7 @@ async fn test_receiver_cancel_leaves_partial_files() -> anyhow::Result<()> {
     let client = Sender::connect(
         addr,
         SendType::Files(&[source_path]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await?
@@ -369,6 +399,7 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
     let client = Sender::connect(
         addr,
         SendType::Files(&[source_folder.clone()]),
+        make_sender_info(),
         CancellationToken::new(),
     )
     .await?
