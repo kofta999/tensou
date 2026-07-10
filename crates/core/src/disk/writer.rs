@@ -67,20 +67,28 @@ impl DiskWriter {
                         Some(packet) => {
                             let size = packet.bytes.len() as u64;
 
-                            self.write_chunk(packet).await?;
-                            chunks_since_save += 1;
+                            // Cancel transfer on chunk hash failure (rare to happen, user can resume later)
+                            if !self.write_chunk(packet).await? {
+                                self.observer.on_transfer_failed(
+                                    self.transfer_id,
+                                    "Chunk integrity check failed — retry the transfer",
+                                );
+                                self.cancel_token.cancel();
+                            } else {
+                                chunks_since_save += 1;
 
-                            self.observer
-                                .on_chunk_transferred(Some(self.transfer_id), size);
+                                self.observer
+                                    .on_chunk_transferred(Some(self.transfer_id), size);
 
-                            if self.is_complete() {
-                                self.commit()?;
-                                break;
-                            }
+                                if self.is_complete() {
+                                    self.commit()?;
+                                    break;
+                                }
 
-                            if chunks_since_save >= SAVE_INTERVAL {
-                                self.save_state().await?;
-                                chunks_since_save = 0;
+                                if chunks_since_save >= SAVE_INTERVAL {
+                                    self.save_state().await?;
+                                    chunks_since_save = 0;
+                                }
                             }
                         }
                         None => break,
