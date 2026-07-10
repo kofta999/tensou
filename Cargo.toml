@@ -45,7 +45,7 @@ winresource = "0.1.19"
 opt-level = "z"      # Optimize for size
 lto = true          # Enable Link-Time Optimization (LTO)
 codegen-units = 1   # Limit to 1 codegen unit to enable full LTO optimizations
-panic = "abort"     # Remove unwinding information (reduces binary size)
+# panic = "abort"     # Remove unwinding information (reduces binary size)
 strip = true        # Automatically strip debug symbols from binary
 
 [package.metadata.packager]
