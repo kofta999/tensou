@@ -1,5 +1,5 @@
 use crate::{
-    ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE,
+    ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE,
     crypto::SkipServerVerification,
     disk::SendSession,
     protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
@@ -94,7 +94,7 @@ impl Sender {
         };
 
         log::info!("Transfer accepted. Reading remote states...");
-        let buf = recv.read_to_end(MAX_METADATA_SIZE as usize).await?;
+        let buf = recv.read_to_end(MAX_REQUEST_SIZE as usize).await?;
         let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;
         log::debug!("Successfully loaded remote transfer state.");
 

@@ -1,6 +1,6 @@
 use crate::{
-    CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_METADATA_SIZE, QUIC_RECEIVE_WINDOW,
-    QUIC_STREAM_RECEIVE_WINDOW,
+    CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE, QUIC_ESTABLISH_CONN_TIMEOUT_SECS,
+    QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW, REQUEST_READ_TIMEOUT_SECS,
     config::Config,
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
@@ -19,6 +19,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::task::JoinSet;
+use tokio::time::{Duration, timeout};
 use tokio_util::sync::CancellationToken;
 
 // Server listener
@@ -55,10 +57,7 @@ impl ReceiverDaemon {
         parent_cancel_token: CancellationToken,
         mut reload_rx: tokio::sync::mpsc::Receiver<()>,
     ) {
-        use tokio::task::JoinSet;
-        use tokio::time::{Duration, timeout};
-
-        let mut active_transfers = JoinSet::new();
+        let mut active_transfers: JoinSet<anyhow::Result<()>> = JoinSet::new();
 
         loop {
             tokio::select! {
@@ -75,140 +74,167 @@ impl ReceiverDaemon {
                 }
 
                 incoming = self.endpoint.accept() => {
-
-                let Some(incoming) = incoming else {break};
-
-                let target_dir_clone = {
-                    let config = self.config.lock().unwrap();
-                    config.target_dir.clone()
-                };
-                let observer_clone = observer.clone();
-                let transfer_id = rand::random::<u32>();
-                let consent_clone = consent.clone();
-                let conn_cancel_token = parent_cancel_token.child_token();
-                let config_clone = self.config.clone();
-
-                while active_transfers.try_join_next().is_some() {}
-
-                active_transfers.spawn(async move {
-                    let connection = match timeout(Duration::from_secs(5), incoming).await {
-                        Ok(Ok(conn)) => conn,
-                        Ok(Err(e)) => {
-                            log::error!("Quinn connection establishment failed: {e}");
-                            return anyhow::Ok(());
-                        }
-                        Err(_) => {
-                            log::warn!("Connection handshake timed out.");
-                            return anyhow::Ok(());
-                        }
-                    };
-
-                    let peer = connection.remote_address();
-
-                    match timeout(
-                        Duration::from_secs(10),
-                        PendingTransfer::read_manifest(connection.clone()),
-                    )
-                    .await
-                    {
-                        Ok(Ok(pending)) => {
-                            let auto_accept = {
-                                let config = config_clone.lock().unwrap();
-                                config.auto_accept
-                            };
-
-                            let is_accepted = if auto_accept {
-                                true
-                            } else {
-                                consent_clone
-                                    .request_consent(peer, &pending.request.sender, pending.request.payload.job_name())
-                                    .await
-                            };
-
-                            if is_accepted {
-                                let overwrite = {
-                                    let config = config_clone.lock().unwrap();
-                                    config.overwrite_dest
-                                };
-
-                                match pending
-                                    .accept(
-                                        &target_dir_clone,
-                                        observer_clone.clone(),
-                                        transfer_id,
-                                        conn_cancel_token.clone(),
-                                        overwrite,
-                                    )
-                                    .await
-                                {
-                                    Ok(AcceptResult::File(receiver)) => {
-                                        observer_clone.on_transfer_started(
-                                            transfer_id,
-                                            peer,
-                                            receiver.total_full_size,
-                                            receiver.total_full_size.saturating_sub(receiver.total_size),
-                                            &receiver.job_name,
-                                            conn_cancel_token.clone()
-                                        );
-
-                                        tokio::select!{
-                                            _ = conn_cancel_token.cancelled() =>  {
-                                                connection.close(0u32.into(), b"Cancelled by receiver");
-                                                observer_clone.on_transfer_failed(transfer_id, "Cancelled locally");
-                                            }
-
-                                            err = connection.closed() => {
-                                                if let quinn::ConnectionError::ApplicationClosed(app_close) = &err {
-                                                    let reason = String::from_utf8_lossy(&app_close.reason);
-                                                    observer_clone.on_transfer_failed(transfer_id, &reason);
-                                                } else {
-                                                    observer_clone.on_transfer_failed(transfer_id, &err.to_string());
-                                                }
-                                            }
-
-                                            res = receiver.process_chunks(conn_cancel_token.clone()) => {
-                                                match res {
-                                                    Ok(_) => {
-                                                        observer_clone.on_transfer_complete(transfer_id);
-                                                    }
-                                                    Err(e) => {
-                                                        log::error!("Transfer chunk processing error: {e}");
-                                                        observer_clone.on_transfer_failed(transfer_id, &e.to_string());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Ok(AcceptResult::Text) => {
-                                        observer_clone.on_transfer_complete(transfer_id);
-                                        let _ = connection.closed().await;
-                                    }
-                                    Err(e) => {
-                                        observer_clone.on_transfer_failed(transfer_id, &e.to_string());
-                                        return anyhow::Ok(());
-                                    }
-                                }
-
-                            } else {
-                                log::info!("Transfer from {} was rejected.", peer);
-                                pending.reject().await?;
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            log::error!("Handshake manifest read failed! {e}");
-                        }
-                        Err(_) => {
-                            log::warn!("Timed out waiting for manifest from {peer}");
-                        }
-                    };
-
-                    anyhow::Ok(())
-                });
+                    let Some(incoming) = incoming else { break };
+                    self.handle_connection(incoming, &observer, &consent, &parent_cancel_token, &mut active_transfers);
             }}
         }
 
         log::info!("Waiting for active transfers to safely flush to disk...");
-        while active_transfers.join_next().await.is_some() {}
+        while let Some(res) = active_transfers.join_next().await {
+            if let Err(e) = res {
+                log::error!("Transfer handler task panicked: {e:?}");
+            }
+        }
+    }
+
+    fn handle_connection(
+        &self,
+        incoming: quinn::Incoming,
+        observer: &Arc<dyn TransferObserver>,
+        consent: &Arc<dyn TransferConsentHandler>,
+        parent_cancel_token: &CancellationToken,
+        active_transfers: &mut JoinSet<anyhow::Result<()>>,
+    ) {
+        let target_dir_clone = {
+            let config = self.config.lock().unwrap();
+            config.target_dir.clone()
+        };
+        let observer_clone = observer.clone();
+        let transfer_id = rand::random::<u32>();
+        let consent_clone = consent.clone();
+        let conn_cancel_token = parent_cancel_token.child_token();
+        let config_clone = self.config.clone();
+
+        while let Some(res) = active_transfers.try_join_next() {
+            if let Err(e) = res {
+                log::error!("Transfer handler task panicked: {e:?}");
+            }
+        }
+
+        let handler = async move {
+            let connection = match timeout(
+                Duration::from_secs(QUIC_ESTABLISH_CONN_TIMEOUT_SECS),
+                incoming,
+            )
+            .await
+            {
+                Ok(Ok(conn)) => conn,
+                Ok(Err(e)) => {
+                    log::error!("Quinn connection establishment failed: {e}");
+                    return anyhow::Ok(());
+                }
+                Err(_) => {
+                    log::warn!("Connection handshake timed out.");
+                    return anyhow::Ok(());
+                }
+            };
+
+            let peer = connection.remote_address();
+
+            match timeout(
+                Duration::from_secs(REQUEST_READ_TIMEOUT_SECS),
+                PendingTransfer::read_request(connection.clone()),
+            )
+            .await
+            {
+                Ok(Ok(pending)) => {
+                    let auto_accept = {
+                        let config = config_clone.lock().unwrap();
+                        config.auto_accept
+                    };
+
+                    let is_accepted = if auto_accept {
+                        true
+                    } else {
+                        consent_clone
+                            .request_consent(
+                                peer,
+                                &pending.request.sender,
+                                pending.request.payload.job_name(),
+                            )
+                            .await
+                    };
+
+                    if is_accepted {
+                        let overwrite = {
+                            let config = config_clone.lock().unwrap();
+                            config.overwrite_dest
+                        };
+
+                        match pending
+                            .accept(
+                                &target_dir_clone,
+                                observer_clone.clone(),
+                                transfer_id,
+                                conn_cancel_token.clone(),
+                                overwrite,
+                            )
+                            .await
+                        {
+                            Ok(AcceptResult::File(receiver)) => {
+                                observer_clone.on_transfer_started(
+                                    transfer_id,
+                                    peer,
+                                    receiver.total_full_size,
+                                    receiver.total_full_size.saturating_sub(receiver.total_size),
+                                    &receiver.job_name,
+                                    conn_cancel_token.clone(),
+                                );
+
+                                tokio::select! {
+                                    _ = conn_cancel_token.cancelled() =>  {
+                                        connection.close(0u32.into(), b"Cancelled by receiver");
+                                        observer_clone.on_transfer_failed(transfer_id, "Cancelled locally");
+                                    }
+
+                                    err = connection.closed() => {
+                                        if let quinn::ConnectionError::ApplicationClosed(app_close) = &err {
+                                            let reason = String::from_utf8_lossy(&app_close.reason);
+                                            observer_clone.on_transfer_failed(transfer_id, &reason);
+                                        } else {
+                                            observer_clone.on_transfer_failed(transfer_id, &err.to_string());
+                                        }
+                                    }
+
+                                    res = receiver.process_chunks(conn_cancel_token.clone()) => {
+                                        match res {
+                                            Ok(_) => {
+                                                observer_clone.on_transfer_complete(transfer_id);
+                                            }
+                                            Err(e) => {
+                                                log::error!("Transfer chunk processing error: {e}");
+                                                observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(AcceptResult::Text) => {
+                                observer_clone.on_transfer_complete(transfer_id);
+                                let _ = connection.closed().await;
+                            }
+                            Err(e) => {
+                                observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                return anyhow::Ok(());
+                            }
+                        }
+                    } else {
+                        log::info!("Transfer from {} was rejected.", peer);
+                        pending.reject().await?;
+                    }
+                }
+                Ok(Err(e)) => {
+                    log::error!("Handshake manifest read failed! {e}");
+                }
+                Err(_) => {
+                    log::warn!("Timed out waiting for manifest from {peer}");
+                }
+            };
+
+            anyhow::Ok(())
+        };
+
+        active_transfers.spawn(handler);
     }
 
     fn configure_server() -> anyhow::Result<ServerConfig> {
@@ -241,14 +267,14 @@ pub(super) struct PendingTransfer {
 }
 
 impl PendingTransfer {
-    pub async fn read_manifest(connection: quinn::Connection) -> anyhow::Result<Self> {
+    pub async fn read_request(connection: quinn::Connection) -> anyhow::Result<Self> {
         log::debug!(
             "Receiving handshake request from {}...",
             connection.remote_address()
         );
         let (send_stream, mut recv_stream) = connection.accept_bi().await?;
 
-        let buf = recv_stream.read_to_end(MAX_METADATA_SIZE as usize).await?;
+        let buf = recv_stream.read_to_end(MAX_REQUEST_SIZE as usize).await?;
         let request: TransferRequest = rmp_serde::from_slice(&buf)?;
 
         Ok(Self {
