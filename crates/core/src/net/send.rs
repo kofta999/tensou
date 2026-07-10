@@ -5,12 +5,7 @@ use crate::{
     protocol::{self, State, TransferObserver, TransferRequest},
 };
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
@@ -24,8 +19,7 @@ pub struct Sender {
 
 #[derive(Debug)]
 pub enum SendType<'a> {
-    Single(&'a Path),
-    Multiple(&'a [PathBuf]),
+    Files(&'a [PathBuf]),
     Text {
         device_name: String,
         content: String,
@@ -41,12 +35,8 @@ impl Sender {
         log::info!("Preparing transfer manifest for: {:?}", send_type);
 
         let (request, sessions) = match send_type {
-            SendType::Single(path) => {
-                let res = protocol::manifest::build(path)?;
-                (TransferRequest::File(res.0), Some(res.1))
-            }
-            SendType::Multiple(paths) => {
-                let res = protocol::manifest::build_multiple(paths)?;
+            SendType::Files(paths) => {
+                let res = protocol::manifest::build(paths)?;
                 (TransferRequest::File(res.0), Some(res.1))
             }
             SendType::Text {

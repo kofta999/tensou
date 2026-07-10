@@ -116,7 +116,7 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
         cancel_clone.cancel();
     });
 
-    let client = Sender::connect(selected_addr, SendType::Multiple(&paths), cancel_token)
+    let client = Sender::connect(selected_addr, SendType::Files(&paths), cancel_token)
         .await?
         .unwrap();
     let total_bytes = client.get_total_bytes();

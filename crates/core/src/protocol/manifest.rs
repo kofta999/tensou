@@ -105,57 +105,7 @@ pub fn parse(
     Ok((instructions, staging))
 }
 
-pub fn build(path: &Path) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
-    let mut files = Vec::new();
-    let mut sessions = HashMap::new();
-
-    for (i, entry) in WalkDir::new(path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .enumerate()
-    {
-        let metadata = Metadata {
-            file_id: i,
-            chunk_size: CHUNK_SIZE.into(),
-            relative_path: if path.is_dir() {
-                let parent = path.parent().unwrap_or(path);
-                entry
-                    .path()
-                    .strip_prefix(parent)?
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                entry.file_name().to_string_lossy().into_owned()
-            },
-            size: entry.metadata()?.len(),
-        };
-
-        sessions.insert(
-            i,
-            Arc::new(SendSession::new(metadata.clone(), entry.path())?),
-        );
-
-        files.push(metadata);
-    }
-
-    let name = path
-        .file_name()
-        .map(|v| v.to_string_lossy().into_owned())
-        .ok_or(anyhow::anyhow!("Cannot get name of folder path"))?;
-    Ok((
-        Manifest {
-            job_name: name.clone(),
-            top_level_targets: vec![name],
-            files,
-        },
-        sessions,
-    ))
-}
-
-pub fn build_multiple(
-    paths: &[PathBuf],
-) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
+pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
     let mut files = Vec::new();
     let mut sessions = HashMap::new();
     let mut file_id_counter = 0;

@@ -261,7 +261,7 @@ mod tests {
         let file = dir.path().join("hello.txt");
         std::fs::write(&file, b"hello world").unwrap();
 
-        let (manifest, sessions) = manifest::build(&file).unwrap();
+        let (manifest, sessions) = manifest::build(&[file]).unwrap();
 
         assert_eq!(manifest.job_name, "hello.txt");
         assert_eq!(manifest.files.len(), 1);
@@ -278,7 +278,7 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), b"aaa").unwrap();
         std::fs::write(dir.path().join("sub/b.txt"), b"bbbbb").unwrap();
 
-        let (manifest, sessions) = manifest::build(dir.path()).unwrap();
+        let (manifest, sessions) = manifest::build(&[dir.path().to_path_buf()]).unwrap();
 
         assert_eq!(manifest.files.len(), 2);
         assert_eq!(sessions.len(), 2);

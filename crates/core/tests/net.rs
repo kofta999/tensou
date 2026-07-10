@@ -83,7 +83,7 @@ async fn test_full_network_transfer() -> anyhow::Result<()> {
 
     let client = Sender::connect(
         addr,
-        SendType::Single(&source_path),
+        SendType::Files(&[source_path.clone()]),
         CancellationToken::new(),
     )
     .await?
@@ -131,7 +131,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
 
     let client_1 = Sender::connect(
         addr,
-        SendType::Single(&source_path_1),
+        SendType::Files(&[source_path_1.clone()]),
         CancellationToken::new(),
     )
     .await?
@@ -141,7 +141,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
 
     let client_2 = Sender::connect(
         addr,
-        SendType::Single(&source_path_2_named_same),
+        SendType::Files(&[source_path_2_named_same.clone()]),
         CancellationToken::new(),
     )
     .await?
@@ -181,7 +181,7 @@ async fn test_transfer_rejected() -> anyhow::Result<()> {
 
     let result = Sender::connect(
         addr,
-        SendType::Single(&source_path),
+        SendType::Files(&[source_path]),
         CancellationToken::new(),
     )
     .await;
@@ -215,9 +215,13 @@ async fn test_directory_transfer() -> anyhow::Result<()> {
     )
     .await;
 
-    let client = Sender::connect(addr, SendType::Single(&job_dir), CancellationToken::new())
-        .await?
-        .unwrap();
+    let client = Sender::connect(
+        addr,
+        SendType::Files(&[job_dir.clone()]),
+        CancellationToken::new(),
+    )
+    .await?
+    .unwrap();
     client.process_chunks(Arc::new(TestObserver {})).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -260,7 +264,7 @@ async fn test_sender_cancel_leaves_partial_files() -> anyhow::Result<()> {
 
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
-    let client = Sender::connect(addr, SendType::Single(&source_path), cancel.clone())
+    let client = Sender::connect(addr, SendType::Files(&[source_path]), cancel.clone())
         .await?
         .unwrap();
 
@@ -312,7 +316,7 @@ async fn test_receiver_cancel_leaves_partial_files() -> anyhow::Result<()> {
 
     let client = Sender::connect(
         addr,
-        SendType::Single(&source_path),
+        SendType::Files(&[source_path]),
         CancellationToken::new(),
     )
     .await?
@@ -364,7 +368,7 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let client = Sender::connect(
         addr,
-        SendType::Single(&source_folder),
+        SendType::Files(&[source_folder.clone()]),
         CancellationToken::new(),
     )
     .await?

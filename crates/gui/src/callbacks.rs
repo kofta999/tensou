@@ -351,7 +351,7 @@ fn send_file_background(
 
         match net::Sender::connect(
             target_addr,
-            net::SendType::Multiple(&paths),
+            net::SendType::Files(&paths),
             CancellationToken::new(),
         )
         .await
