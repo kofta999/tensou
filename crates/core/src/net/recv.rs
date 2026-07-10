@@ -22,6 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinSet;
 use tokio::time::{Duration, timeout};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 // Server listener
 pub struct ReceiverDaemon {
@@ -100,7 +101,6 @@ impl ReceiverDaemon {
             config.target_dir.clone()
         };
         let observer_clone = observer.clone();
-        let transfer_id = rand::random::<u32>();
         let consent_clone = consent.clone();
         let conn_cancel_token = parent_cancel_token.child_token();
         let config_clone = self.config.clone();
@@ -160,6 +160,7 @@ impl ReceiverDaemon {
                             let config = config_clone.lock().unwrap();
                             config.overwrite_dest
                         };
+                        let transfer_id = pending.request.transfer_id;
 
                         match pending
                             .accept(
@@ -305,7 +306,7 @@ impl PendingTransfer {
         mut self,
         target_dir: &Path,
         observer: Arc<dyn TransferObserver>,
-        transfer_id: u32,
+        transfer_id: Uuid,
         cancel_token: CancellationToken,
         overwrite: bool,
     ) -> anyhow::Result<AcceptResult> {

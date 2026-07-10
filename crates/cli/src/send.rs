@@ -16,11 +16,12 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 struct CliSendTransfer(ProgressBar);
 
 impl TransferObserver for CliSendTransfer {
-    fn on_chunk_transferred(&self, _: Option<u32>, bytes: u64) {
+    fn on_chunk_transferred(&self, _: Uuid, bytes: u64) {
         self.0.inc(bytes);
     }
 }
@@ -128,6 +129,7 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
         SendType::Files(&paths),
         sender_info,
         cancel_token,
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();

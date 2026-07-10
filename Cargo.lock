@@ -5374,6 +5374,7 @@ dependencies = [
  "tensou-gui",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -5424,6 +5425,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

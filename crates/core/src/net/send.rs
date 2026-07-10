@@ -8,12 +8,14 @@ use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct Sender {
     connection: quinn::Connection,
     sessions: HashMap<FileId, Arc<SendSession>>,
     remote_states: Vec<State>,
+    pub transfer_id: Uuid,
     pub cancel_token: CancellationToken,
 }
 
@@ -29,6 +31,7 @@ impl Sender {
         send_type: SendType<'_>,
         sender_info: SenderInfo,
         cancel_token: CancellationToken,
+        transfer_id: uuid::Uuid,
     ) -> anyhow::Result<Option<Self>> {
         log::info!("Preparing transfer manifest for: {:?}", send_type);
 
@@ -37,6 +40,7 @@ impl Sender {
                 let res = protocol::manifest::build(paths)?;
                 (
                     TransferRequest {
+                        transfer_id,
                         payload: TransferPayload::File(res.0),
                         sender: sender_info,
                     },
@@ -45,6 +49,7 @@ impl Sender {
             }
             SendType::Text(content) => (
                 TransferRequest {
+                    transfer_id,
                     payload: TransferPayload::Text(content),
                     sender: sender_info,
                 },
@@ -103,6 +108,7 @@ impl Sender {
             sessions,
             remote_states,
             cancel_token,
+            transfer_id,
         }))
     }
 
@@ -173,7 +179,7 @@ impl Sender {
 
                         stream.finish()?;
 
-                        observer_clone.on_chunk_transferred(None, buf_len);
+                        observer_clone.on_chunk_transferred(self.transfer_id, buf_len);
 
                         anyhow::Ok(())
                     } => {

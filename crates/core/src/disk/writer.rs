@@ -12,6 +12,7 @@ use tokio::{
     task,
 };
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 pub struct DiskWriter {
     metadata: Metadata,
@@ -19,7 +20,7 @@ pub struct DiskWriter {
     staging: Arc<TransferStaging>,
     is_resumed: bool,
     file: Option<File>,
-    transfer_id: u32,
+    transfer_id: Uuid,
     rx: ChunkPacketReceiver,
     observer: Arc<dyn TransferObserver>,
     cancel_token: CancellationToken,
@@ -78,7 +79,7 @@ impl DiskWriter {
                                 chunks_since_save += 1;
 
                                 self.observer
-                                    .on_chunk_transferred(Some(self.transfer_id), size);
+                                    .on_chunk_transferred(self.transfer_id, size);
 
                                 if self.is_complete() {
                                     self.commit()?;
@@ -196,7 +197,7 @@ impl DiskWriter {
 pub struct IgnitionPayload {
     pub rx: ChunkPacketReceiver,
     pub ins: JobInstruction,
-    pub transfer_id: u32,
+    pub transfer_id: Uuid,
     pub observer: Arc<dyn TransferObserver>,
     pub staging: Arc<TransferStaging>,
     pub cancel_token: CancellationToken,

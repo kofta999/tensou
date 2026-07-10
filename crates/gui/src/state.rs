@@ -8,6 +8,7 @@ use tensou_core::protocol::{SenderInfo, TransferConsentHandler, TransferObserver
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GuiScreen {
@@ -70,7 +71,7 @@ impl From<DiscoveredDevice> for GuiDevice {
 }
 
 pub struct GuiTransfer {
-    pub id: u32,
+    pub id: String,
     pub is_sender: bool,
     pub job_name: String,
     pub total_bytes: u64,
@@ -88,7 +89,7 @@ pub struct GuiTransfer {
 
 pub enum GuiEvent {
     TransferStarted {
-        transfer_id: u32,
+        transfer_id: String,
         is_sender: bool,
         job_name: String,
         total_bytes: u64,
@@ -100,18 +101,18 @@ pub enum GuiEvent {
         peer_addr: SocketAddr,
     },
     ChunkTransferred {
-        transfer_id: u32,
+        transfer_id: String,
         bytes: u64,
     },
     TransferFinished {
-        transfer_id: u32,
+        transfer_id: String,
     },
     TransferFailed {
-        transfer_id: u32,
+        transfer_id: String,
         error: String,
     },
     IncomingConsentRequest {
-        transfer_id: u32,
+        transfer_id: String,
         peer: SocketAddr,
         sender: SenderInfo,
         job_name: String,
@@ -124,7 +125,6 @@ pub enum GuiEvent {
 }
 
 pub struct GuiTransferObserver {
-    pub transfer_id: u32,
     pub tx: UnboundedSender<GuiEvent>,
     pub is_sender: bool,
     pub target_dir: std::path::PathBuf,
@@ -133,7 +133,7 @@ pub struct GuiTransferObserver {
 impl TransferObserver for GuiTransferObserver {
     fn on_transfer_started(
         &self,
-        transfer_id: u32,
+        transfer_id: Uuid,
         peer: SocketAddr,
         total_bytes: u64,
         bytes_done: u64,
@@ -141,7 +141,7 @@ impl TransferObserver for GuiTransferObserver {
         cancel_token: CancellationToken,
     ) {
         let _ = self.tx.send(GuiEvent::TransferStarted {
-            transfer_id,
+            transfer_id: transfer_id.to_string(),
             is_sender: self.is_sender,
             job_name: job_name.to_string(),
             total_bytes,
@@ -154,21 +154,22 @@ impl TransferObserver for GuiTransferObserver {
         });
     }
 
-    fn on_chunk_transferred(&self, transfer_id: Option<u32>, bytes: u64) {
-        let tid = transfer_id.unwrap_or(self.transfer_id);
+    fn on_chunk_transferred(&self, transfer_id: Uuid, bytes: u64) {
         let _ = self.tx.send(GuiEvent::ChunkTransferred {
-            transfer_id: tid,
+            transfer_id: transfer_id.to_string(),
             bytes,
         });
     }
 
-    fn on_transfer_complete(&self, transfer_id: u32) {
-        let _ = self.tx.send(GuiEvent::TransferFinished { transfer_id });
+    fn on_transfer_complete(&self, transfer_id: Uuid) {
+        let _ = self.tx.send(GuiEvent::TransferFinished {
+            transfer_id: transfer_id.to_string(),
+        });
     }
 
-    fn on_transfer_failed(&self, transfer_id: u32, error: &str) {
+    fn on_transfer_failed(&self, transfer_id: Uuid, error: &str) {
         let _ = self.tx.send(GuiEvent::TransferFailed {
-            transfer_id,
+            transfer_id: transfer_id.to_string(),
             error: error.to_string(),
         });
     }
@@ -183,7 +184,7 @@ impl TransferObserver for GuiTransferObserver {
 }
 
 pub struct ConsentRegistry {
-    pub pending: Mutex<HashMap<u32, oneshot::Sender<bool>>>,
+    pub pending: Mutex<HashMap<Uuid, oneshot::Sender<bool>>>,
 }
 
 impl ConsentRegistry {
@@ -193,7 +194,7 @@ impl ConsentRegistry {
         }
     }
 
-    pub fn accept(&self, transfer_id: u32) {
+    pub fn accept(&self, transfer_id: uuid::Uuid) {
         log::debug!(
             "ConsentRegistry::accept: trying to accept transfer_id={}",
             transfer_id
@@ -217,7 +218,7 @@ impl ConsentRegistry {
         }
     }
 
-    pub fn reject(&self, transfer_id: u32) {
+    pub fn reject(&self, transfer_id: uuid::Uuid) {
         log::debug!(
             "ConsentRegistry::reject: trying to reject transfer_id={}",
             transfer_id
@@ -243,7 +244,7 @@ pub struct GuiConsentHandler {
 #[async_trait]
 impl TransferConsentHandler for GuiConsentHandler {
     async fn request_consent(&self, peer: SocketAddr, sender: &SenderInfo, job_name: &str) -> bool {
-        let transfer_id = rand::random::<u32>();
+        let transfer_id = uuid::Uuid::new_v4();
         let (tx, rx) = oneshot::channel();
 
         log::debug!(
@@ -258,7 +259,7 @@ impl TransferConsentHandler for GuiConsentHandler {
             .insert(transfer_id, tx);
 
         let _ = self.event_tx.send(GuiEvent::IncomingConsentRequest {
-            transfer_id,
+            transfer_id: transfer_id.to_string(),
             peer,
             sender: sender.clone(),
             job_name: job_name.to_string(),

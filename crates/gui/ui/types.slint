@@ -11,7 +11,7 @@ export struct Device {
 }
 
 export struct Transfer {
-    id: int,
+    id: string,
     is_sender: bool,
     job_name: string,
     total_bytes: string,
@@ -30,7 +30,7 @@ export struct ClipboardMessage {
 }
 
 export struct ConsentRequest {
-    transfer_id: int,
+    transfer_id: string,
     peer_ip: string,
     device_name: string,
     device_os: string,
@@ -44,7 +44,7 @@ export enum AppTab {
 }
 
 export struct CancelRequest {
-    transfer_id: int,
+    transfer_id: string,
     job_name: string,
 }
 

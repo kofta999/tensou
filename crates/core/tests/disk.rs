@@ -11,6 +11,7 @@ use tensou_core::{
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 fn make_staging(dir: &std::path::Path, top_level_prefix: Option<&str>) -> Arc<TransferStaging> {
     let s = Arc::new(TransferStaging::new(dir.to_path_buf(), top_level_prefix));
@@ -48,7 +49,7 @@ async fn test_full_local_transfer() -> anyhow::Result<()> {
     let ignition = IgnitionPayload {
         ins: instruction,
         rx,
-        transfer_id: 0,
+        transfer_id: Uuid::new_v4(),
         observer: Arc::new(TestObserver {}),
         cancel_token: CancellationToken::new(),
         staging,
@@ -74,7 +75,7 @@ struct ChunkSignalObserver {
     tx: mpsc::Sender<()>,
 }
 impl TransferObserver for ChunkSignalObserver {
-    fn on_chunk_transferred(&self, _transfer_id: Option<u32>, _bytes: u64) {
+    fn on_chunk_transferred(&self, _transfer_id: Uuid, _bytes: u64) {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let _ = tx.send(()).await;
@@ -113,7 +114,7 @@ async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
     let ignition = IgnitionPayload {
         ins: instruction,
         rx,
-        transfer_id: 0,
+        transfer_id: Uuid::new_v4(),
         observer,
         cancel_token: cancel_token.clone(),
         staging,

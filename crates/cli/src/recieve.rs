@@ -13,17 +13,18 @@ use tensou_core::{
     protocol::{SenderInfo, TransferConsentHandler, TransferObserver},
 };
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 struct CliReceiveTransfer {
     multi_progress: MultiProgress,
     // TODO: Use channels here to avoid Mutex locks
-    active: Mutex<HashMap<u32, ProgressBar>>,
+    active: Mutex<HashMap<Uuid, ProgressBar>>,
 }
 
 impl TransferObserver for CliReceiveTransfer {
     fn on_transfer_started(
         &self,
-        transfer_id: u32,
+        transfer_id: Uuid,
         _peer: SocketAddr,
         total_bytes: u64,
         bytes_done: u64,
@@ -37,14 +38,14 @@ impl TransferObserver for CliReceiveTransfer {
         self.active.lock().unwrap().insert(transfer_id, pb);
     }
 
-    fn on_chunk_transferred(&self, transfer_id: Option<u32>, bytes: u64) {
+    fn on_chunk_transferred(&self, transfer_id: Uuid, bytes: u64) {
         let active = self.active.lock().unwrap();
-        if let Some(pb) = transfer_id.and_then(|v| active.get(&v)) {
+        if let Some(pb) = active.get(&transfer_id) {
             pb.inc(bytes);
         }
     }
 
-    fn on_transfer_complete(&self, transfer_id: u32) {
+    fn on_transfer_complete(&self, transfer_id: Uuid) {
         if let Some(pb) = self.active.lock().unwrap().remove(&transfer_id) {
             pb.set_style(
                 pb.style()
@@ -56,7 +57,7 @@ impl TransferObserver for CliReceiveTransfer {
         }
     }
 
-    fn on_transfer_failed(&self, transfer_id: u32, error: &str) {
+    fn on_transfer_failed(&self, transfer_id: Uuid, error: &str) {
         if let Some(pb) = self.active.lock().unwrap().remove(&transfer_id) {
             pb.finish_with_message(format!("Failed: {}", error));
         }

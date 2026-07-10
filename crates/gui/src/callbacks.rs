@@ -15,6 +15,7 @@ use tensou_core::protocol::SenderInfo;
 use tensou_core::util::generate_job_name;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 pub fn setup(
     main_window: &MainWindow,
@@ -162,10 +163,11 @@ pub fn setup(
         let consent_registry = consent_registry.clone();
         let main_window_weak = main_window.as_weak();
         move |transfer_id, accepted| {
+            let transfer_id = Uuid::parse_str(&transfer_id).expect("Transfer ID must be a UUID");
             if accepted {
-                consent_registry.accept(transfer_id as u32);
+                consent_registry.accept(transfer_id);
             } else {
-                consent_registry.reject(transfer_id as u32);
+                consent_registry.reject(transfer_id);
             }
             if let Some(ui) = main_window_weak.upgrade() {
                 ui.global::<AppData>().set_has_consent_request(false);
@@ -180,11 +182,11 @@ pub fn setup(
         move |transfer_id| {
             log::info!("Cancel clicked for transfer: {}", transfer_id);
             let transfers = local_transfers.lock().unwrap();
-            if let Some(transfer) = transfers.iter().find(|t| t.id == transfer_id as u32) {
+            if let Some(transfer) = transfers.iter().find(|t| transfer_id == t.id) {
                 transfer.cancel_token.cancel();
 
                 let _ = event_clone.send(GuiEvent::TransferFailed {
-                    transfer_id: transfer_id as u32,
+                    transfer_id: transfer_id.to_string(),
                     error: "Transfer Cancelled".to_string(),
                 });
             }
@@ -197,7 +199,7 @@ pub fn setup(
         move |transfer_id| {
             log::info!("Pause clicked for transfer: {}", transfer_id);
             let mut transfers = local_transfers.lock().unwrap();
-            if let Some(transfer) = transfers.iter_mut().find(|t| t.id == transfer_id as u32) {
+            if let Some(transfer) = transfers.iter_mut().find(|t| transfer_id == t.id) {
                 transfer.status = "Paused".to_string();
                 transfer.cancel_token.cancel();
             }
@@ -212,7 +214,7 @@ pub fn setup(
         move |transfer_id| {
             log::info!("Resume clicked for transfer: {}", transfer_id);
             let mut transfers = local_transfers.lock().unwrap();
-            if let Some(transfer) = transfers.iter_mut().find(|t| t.id == transfer_id as u32) {
+            if let Some(transfer) = transfers.iter_mut().find(|t| transfer_id == t.id) {
                 transfer.status = "Resuming...".to_string();
 
                 let target_addr = transfer.peer_addr;
@@ -224,7 +226,7 @@ pub fn setup(
                     target_addr,
                     sender_info,
                     paths,
-                    Some(transfer_id as u32),
+                    Some(Uuid::parse_str(&transfer_id).expect("Must be a valid UUID")),
                 );
             }
         }
@@ -235,7 +237,7 @@ pub fn setup(
         .global::<Logic>()
         .on_open_transfer_folder(move |transfer_id| {
             let completed = local_completed_transfers.lock().unwrap();
-            if let Some(t) = completed.iter().find(|x| x.id == transfer_id as u32) {
+            if let Some(t) = completed.iter().find(|x| transfer_id == x.id) {
                 log::info!(
                     "Opening folder for completed transfer: {}",
                     t.local_dir.display()
@@ -317,6 +319,7 @@ pub fn setup(
                         send_type,
                         sender_info,
                         CancellationToken::new(),
+                        Uuid::new_v4(),
                     )
                     .await
                     {
@@ -348,6 +351,7 @@ pub fn setup(
                         send_type,
                         sender_info,
                         CancellationToken::new(),
+                        Uuid::new_v4(),
                     )
                     .await
                     {
@@ -396,9 +400,9 @@ fn send_file_background(
     target_addr: SocketAddr,
     sender_info: SenderInfo,
     paths: Vec<PathBuf>,
-    preset_id: Option<u32>,
+    preset_id: Option<Uuid>,
 ) {
-    let transfer_id = preset_id.unwrap_or_else(|| rand::random::<u32>());
+    let transfer_id = preset_id.unwrap_or_else(|| Uuid::new_v4());
     let tx_clone = event_tx.clone();
 
     tokio::spawn(async move {
@@ -409,6 +413,7 @@ fn send_file_background(
             net::SendType::Files(&paths),
             sender_info,
             CancellationToken::new(),
+            transfer_id,
         )
         .await
         {
@@ -422,7 +427,7 @@ fn send_file_background(
                 let bytes_done = client.get_bytes_done();
 
                 let _ = tx_clone.send(GuiEvent::TransferStarted {
-                    transfer_id,
+                    transfer_id: transfer_id.to_string(),
                     is_sender: true,
                     job_name,
                     total_bytes,
@@ -435,7 +440,6 @@ fn send_file_background(
                 });
 
                 let observer = std::sync::Arc::new(crate::state::GuiTransferObserver {
-                    transfer_id,
                     tx: tx_clone.clone(),
                     is_sender: true,
                     target_dir: local_dir,
@@ -443,11 +447,13 @@ fn send_file_background(
 
                 match client.process_chunks(observer).await {
                     Ok(()) => {
-                        let _ = tx_clone.send(GuiEvent::TransferFinished { transfer_id });
+                        let _ = tx_clone.send(GuiEvent::TransferFinished {
+                            transfer_id: transfer_id.to_string(),
+                        });
                     }
                     Err(e) => {
                         let _ = tx_clone.send(GuiEvent::TransferFailed {
-                            transfer_id,
+                            transfer_id: transfer_id.to_string(),
                             error: e.to_string(),
                         });
                     }
@@ -456,7 +462,7 @@ fn send_file_background(
             Ok(None) => {}
             Err(e) => {
                 let _ = tx_clone.send(GuiEvent::TransferFailed {
-                    transfer_id,
+                    transfer_id: transfer_id.to_string(),
                     error: format!("Connection failed: {}", e),
                 });
             }

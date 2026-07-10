@@ -10,6 +10,7 @@ use tensou_core::protocol::SenderInfo;
 use tensou_core::protocol::TransferConsentHandler;
 use tensou_core::protocol::TransferObserver;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use rand::Rng;
 use tempfile::tempdir;
@@ -105,6 +106,7 @@ async fn test_full_network_transfer() -> anyhow::Result<()> {
         SendType::Files(&[source_path.clone()]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();
@@ -154,6 +156,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
         SendType::Files(&[source_path_1.clone()]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();
@@ -165,6 +168,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
         SendType::Files(&[source_path_2_named_same.clone()]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();
@@ -206,6 +210,7 @@ async fn test_transfer_rejected() -> anyhow::Result<()> {
         SendType::Files(&[source_path]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await;
 
@@ -243,6 +248,7 @@ async fn test_directory_transfer() -> anyhow::Result<()> {
         SendType::Files(&[job_dir.clone()]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();
@@ -293,6 +299,7 @@ async fn test_sender_cancel_leaves_partial_files() -> anyhow::Result<()> {
         SendType::Files(&[source_path]),
         make_sender_info(),
         cancel.clone(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();
@@ -348,6 +355,7 @@ async fn test_receiver_cancel_leaves_partial_files() -> anyhow::Result<()> {
         SendType::Files(&[source_path]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();
@@ -401,6 +409,7 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
         SendType::Files(&[source_folder.clone()]),
         make_sender_info(),
         CancellationToken::new(),
+        Uuid::new_v4(),
     )
     .await?
     .unwrap();

@@ -57,7 +57,6 @@ pub fn run() -> anyhow::Result<()> {
             let cancel_token = CancellationToken::new();
 
             let observer = Arc::new(GuiTransferObserver {
-                transfer_id: 0,
                 tx: daemon_event_tx.clone(),
                 is_sender: false,
                 target_dir,

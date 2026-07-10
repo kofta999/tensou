@@ -127,7 +127,7 @@ export component TransfersView inherits VerticalLayout {
 
                                 HorizontalLayout {
                                     spacing: 6px;
-                                    if transfer.is_sender : ZenButton {
+                                    if transfer.is_sender: ZenButton {
                                         text: transfer.speed_eta == "Paused" ? "Resume" : "Pause";
                                         width: 72px;
                                         height: 32px;

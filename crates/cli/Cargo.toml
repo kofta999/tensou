@@ -9,6 +9,7 @@ dirs = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 tokio-util = { workspace = true }
+uuid = { workspace = true }
 tensou-core = { path = "../core" }
 tensou-gui = { path = "../gui" }
 dialoguer = "0.12.0"

@@ -84,12 +84,12 @@ export global Logic {
     callback copy_to_clipboard(string);
     callback paste_from_clipboard() -> string;
     callback clear_clipboard_history();
-    callback cancel_transfer(int);
-    callback pause_transfer(int);
-    callback resume_transfer(int);
-    callback open_transfer_folder(int);
+    callback cancel_transfer(string);
+    callback pause_transfer(string);
+    callback resume_transfer(string);
+    callback open_transfer_folder(string);
     callback change_download_dir();
-    callback consent_response(int, bool); // transfer_id, accepted
+    callback consent_response(string, bool); // transfer_id, accepted
     callback direct_ip_changed(string);
     callback update_display_name(string);
     callback toggle_overwrite_dest(bool);

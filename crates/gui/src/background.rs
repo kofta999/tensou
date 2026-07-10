@@ -306,7 +306,7 @@ pub fn spawn_transfers(
                                     };
 
                                     Transfer {
-                                        id: t.id as i32,
+                                        id: t.id.clone().into(),
                                         is_sender: t.is_sender,
                                         job_name: t.job_name.clone().into(),
                                         total_bytes: format!("{:.1} MB", total_mb).into(),
@@ -329,7 +329,7 @@ pub fn spawn_transfers(
                                 .map(|t| {
                                     let total_mb = t.total_bytes as f64 / 1_048_576.0;
                                     Transfer {
-                                        id: t.id as i32,
+                                        id: t.id.clone().into(),
                                         is_sender: t.is_sender,
                                         job_name: t.job_name.clone().into(),
                                         total_bytes: format!("{:.1} MB", total_mb).into(),
@@ -379,7 +379,7 @@ pub fn spawn_transfers(
                                 ui.global::<AppData>().set_has_consent_request(has_req);
 
                                 let consent_req = ConsentRequest {
-                                    transfer_id: id as i32,
+                                    transfer_id: id.into(),
                                     peer_ip: ip.clone().into(),
                                     device_name: sender.display_name.into(),
                                     device_os: sender.os_type.into(),
