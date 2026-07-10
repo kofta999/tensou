@@ -296,7 +296,7 @@ pub fn setup(
             let target_addr: Result<SocketAddr, _> = if ip_str.contains(':') {
                 ip_str.parse()
             } else {
-                format!("{}:9999", ip_str).parse()
+                format!("{}:{}", ip_str, tensou_core::SERVER_PORT).parse()
             };
 
             if let Ok(target_addr) = target_addr {
