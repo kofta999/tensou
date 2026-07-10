@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tensou_core::config::Config;
 use tensou_core::net;
+use tensou_core::util::generate_job_name;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -346,21 +347,7 @@ fn send_file_background(
     let tx_clone = event_tx.clone();
 
     tokio::spawn(async move {
-        let job_name = if paths.len() == 1 {
-            paths[0]
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Unknown".to_string())
-        } else {
-            format!(
-                "{} and {} other items",
-                paths[0]
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                paths.len() - 1
-            )
-        };
+        let job_name = generate_job_name(&paths);
 
         match net::Sender::connect(
             target_addr,

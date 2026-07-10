@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use tensou_core::{config::Config, net::SendType};
+use tensou_core::{config::Config, net::SendType, util};
 use tensou_core::{
     discovery::{self, DiscoveryEvent},
     net::Sender,
@@ -25,15 +25,14 @@ impl TransferObserver for CliSendTransfer {
     }
 }
 
-pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result<()> {
-    if !path.exists() {
-        anyhow::bail!("Path '{}' does not exist.", path.display());
+pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::Result<()> {
+    for path in &paths {
+        if !path.exists() {
+            anyhow::bail!("Path '{}' does not exist.", path.display());
+        }
     }
 
-    let display_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string());
+    let display_name = util::generate_job_name(&paths);
 
     println!("Preparing to send: {display_name}");
 
@@ -117,7 +116,7 @@ pub async fn run(path: PathBuf, ip: Option<IpAddr>, port: u16) -> anyhow::Result
         cancel_clone.cancel();
     });
 
-    let client = Sender::connect(selected_addr, SendType::Single(&path), cancel_token)
+    let client = Sender::connect(selected_addr, SendType::Multiple(&paths), cancel_token)
         .await?
         .unwrap();
     let total_bytes = client.get_total_bytes();

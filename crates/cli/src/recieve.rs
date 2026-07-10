@@ -1,4 +1,4 @@
-use crate::{create_transfer_pb, resolve_save_directory};
+use crate::create_transfer_pb;
 use async_trait::async_trait;
 use indicatif::{MultiProgress, ProgressBar};
 use std::{
@@ -81,7 +81,7 @@ impl TransferConsentHandler for CliConsent {
     }
 }
 
-pub async fn run(port: u16, output: Option<PathBuf>) -> anyhow::Result<()> {
+pub async fn run(port: u16, output_path: Option<PathBuf>) -> anyhow::Result<()> {
     let cancel_token = CancellationToken::new();
     let cancel_clone = cancel_token.clone();
 
@@ -94,16 +94,19 @@ pub async fn run(port: u16, output: Option<PathBuf>) -> anyhow::Result<()> {
         cancel_clone.cancel();
     });
 
-    let target_dir = resolve_save_directory(output)?;
-    let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
-
     let mut config = Config::load_or_create();
-    config.target_dir = target_dir.clone();
+    let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
+    let target_path = config.target_dir.clone();
+
+    if let Some(path) = output_path {
+        std::fs::create_dir_all(&path)?;
+        config.target_dir = path.canonicalize()?;
+    }
 
     let daemon = ReceiverDaemon::new(bind_addr, Arc::new(Mutex::new(config)))?;
 
     println!("Listening on port {}", daemon.local_addr()?.port());
-    println!("Saving files to: {}", target_dir.display());
+    println!("Saving files to: {}", target_path.display());
     println!("   Waiting for incoming transfers...\n");
 
     let (_reload_tx, reload_rx) = tokio::sync::mpsc::channel::<()>(1);

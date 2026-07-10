@@ -26,11 +26,7 @@ pub struct Config {
     pub listen_port: u16,
 
     /// Whether to auto-accept incoming requests without consent
-    pub auto_accept: bool, // /// Maximum concurrent QUIC streams allowed per transfer session (default: 8).
-                           // pub max_concurrent_streams: u32,
-
-                           // /// Size of chunks in bytes (default: 4MB).
-                           // pub chunk_size: u32,
+    pub auto_accept: bool,
 }
 
 impl Default for Config {

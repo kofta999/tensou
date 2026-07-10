@@ -18,8 +18,8 @@ pub enum Commands {
     /// Send a file or folder over the local network
     Send {
         /// The absolute or relative path to the file/folder you want to send
-        #[arg(required = true)]
-        path: PathBuf,
+        #[arg(required = true, num_args= 1..)]
+        paths: Vec<PathBuf>,
 
         /// Optional: Custom IP address to send to directly
         #[arg(long)]
@@ -46,25 +46,10 @@ pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Send { path, ip, port }) => send::run(path, ip, port).await,
+        Some(Commands::Send { paths, ip, port }) => send::run(paths, ip, port).await,
         Some(Commands::Receive { port, output }) => recieve::run(port, output).await,
         None => tensou_gui::run(),
     }
-}
-
-fn resolve_save_directory(user_provided_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    if let Some(path) = user_provided_path {
-        std::fs::create_dir_all(&path)?;
-        return Ok(path.canonicalize()?);
-    }
-
-    let downloads_dir = dirs::download_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not locate the system Downloads directory"))?;
-
-    let tensou_dir = downloads_dir.join("Tensou");
-
-    std::fs::create_dir_all(&tensou_dir)?;
-    Ok(tensou_dir.canonicalize()?)
 }
 
 fn create_transfer_pb(total_bytes: u64, name: &str, is_sender: bool) -> ProgressBar {

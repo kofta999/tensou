@@ -60,3 +60,22 @@ pub fn find_unique_path(path: &Path) -> PathBuf {
 pub fn is_safe_relative_path(path: &Path) -> bool {
     path.components().all(|c| matches!(c, Component::Normal(_)))
 }
+
+/// Generate descriptive job name (e.g. "document.pdf and 2 other items")
+pub fn generate_job_name(paths: &[PathBuf]) -> String {
+    if paths.len() == 1 {
+        paths[0]
+            .file_name()
+            .map(|v| v.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Files".to_string())
+    } else {
+        format!(
+            "{} and {} other items",
+            paths[0]
+                .file_name()
+                .map(|v| v.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            paths.len() - 1
+        )
+    }
+}

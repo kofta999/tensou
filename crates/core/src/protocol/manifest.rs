@@ -1,7 +1,7 @@
 use crate::disk::{SendSession, TransferStaging};
 use crate::protocol::Metadata;
 use crate::protocol::{JobInstruction, Manifest};
-use crate::util::is_safe_relative_path;
+use crate::util::{generate_job_name, is_safe_relative_path};
 use crate::{CHUNK_SIZE, FileId};
 use anyhow::bail;
 use std::path::PathBuf;
@@ -196,22 +196,7 @@ pub fn build_multiple(
         }
     }
 
-    // Generate descriptive job name (e.g. "document.pdf and 2 other items")
-    let job_name = if paths.len() == 1 {
-        paths[0]
-            .file_name()
-            .map(|v| v.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Files".to_string())
-    } else {
-        format!(
-            "{} and {} other items",
-            paths[0]
-                .file_name()
-                .map(|v| v.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            paths.len() - 1
-        )
-    };
+    let job_name = generate_job_name(&paths);
 
     Ok((
         Manifest {
