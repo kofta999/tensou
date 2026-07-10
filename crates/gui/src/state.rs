@@ -82,6 +82,8 @@ pub struct GuiTransfer {
     pub status: String,
     pub timestamp: String,
     pub peer_name: String,
+    pub original_paths: Vec<std::path::PathBuf>,
+    pub peer_addr: SocketAddr,
 }
 
 pub enum GuiEvent {
@@ -94,6 +96,8 @@ pub enum GuiEvent {
         cancel_token: CancellationToken,
         local_dir: std::path::PathBuf,
         peer_ip: String,
+        original_paths: Vec<std::path::PathBuf>,
+        peer_addr: SocketAddr,
     },
     ChunkTransferred {
         transfer_id: u32,
@@ -145,6 +149,8 @@ impl TransferObserver for GuiTransferObserver {
             cancel_token,
             local_dir: self.target_dir.clone(),
             peer_ip: peer.ip().to_string(),
+            original_paths: Vec::new(),
+            peer_addr: peer,
         });
     }
 

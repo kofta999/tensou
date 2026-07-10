@@ -46,7 +46,7 @@ pub fn setup(
                     .pick_files()
                 {
                     let sender_info = SenderInfo::from(&*config.lock().unwrap());
-                    send_file_background(event_tx.clone(), target_addr, sender_info, path);
+                    send_file_background(event_tx.clone(), target_addr, sender_info, path, None);
                 }
             } else {
                 log::warn!("Invalid target IP address");
@@ -65,7 +65,7 @@ pub fn setup(
                     .pick_folders()
                 {
                     let sender_info = SenderInfo::from(&*config.lock().unwrap());
-                    send_file_background(event_tx.clone(), target_addr, sender_info, path);
+                    send_file_background(event_tx.clone(), target_addr, sender_info, path, None);
                 }
             } else {
                 log::warn!("Invalid target IP address");
@@ -84,7 +84,7 @@ pub fn setup(
                 .pick_files()
             {
                 let sender_info = SenderInfo::from(&*config.lock().unwrap());
-                send_file_background(event_tx.clone(), target_addr, sender_info, path);
+                send_file_background(event_tx.clone(), target_addr, sender_info, path, None);
             }
         }
     });
@@ -100,7 +100,7 @@ pub fn setup(
                 .pick_folders()
             {
                 let sender_info = SenderInfo::from(&*config.lock().unwrap());
-                send_file_background(event_tx.clone(), target_addr, sender_info, path);
+                send_file_background(event_tx.clone(), target_addr, sender_info, path, None);
             }
         }
     });
@@ -187,6 +187,45 @@ pub fn setup(
                     transfer_id: transfer_id as u32,
                     error: "Transfer Cancelled".to_string(),
                 });
+            }
+        }
+    });
+
+    // Pause Transfer
+    main_window.global::<Logic>().on_pause_transfer({
+        let local_transfers = local_transfers.clone();
+        move |transfer_id| {
+            log::info!("Pause clicked for transfer: {}", transfer_id);
+            let mut transfers = local_transfers.lock().unwrap();
+            if let Some(transfer) = transfers.iter_mut().find(|t| t.id == transfer_id as u32) {
+                transfer.status = "Paused".to_string();
+                transfer.cancel_token.cancel();
+            }
+        }
+    });
+
+    // Resume Transfer
+    let event_resume_clone = event_tx.clone();
+    main_window.global::<Logic>().on_resume_transfer({
+        let local_transfers = local_transfers.clone();
+        let config = config.clone();
+        move |transfer_id| {
+            log::info!("Resume clicked for transfer: {}", transfer_id);
+            let mut transfers = local_transfers.lock().unwrap();
+            if let Some(transfer) = transfers.iter_mut().find(|t| t.id == transfer_id as u32) {
+                transfer.status = "Resuming...".to_string();
+
+                let target_addr = transfer.peer_addr;
+                let paths = transfer.original_paths.clone();
+                let sender_info = SenderInfo::from(&*config.lock().unwrap());
+
+                send_file_background(
+                    event_resume_clone.clone(),
+                    target_addr,
+                    sender_info,
+                    paths,
+                    Some(transfer_id as u32),
+                );
             }
         }
     });
@@ -357,8 +396,9 @@ fn send_file_background(
     target_addr: SocketAddr,
     sender_info: SenderInfo,
     paths: Vec<PathBuf>,
+    preset_id: Option<u32>,
 ) {
-    let transfer_id = rand::random::<u32>();
+    let transfer_id = preset_id.unwrap_or_else(|| rand::random::<u32>());
     let tx_clone = event_tx.clone();
 
     tokio::spawn(async move {
@@ -390,6 +430,8 @@ fn send_file_background(
                     cancel_token: client.cancel_token.clone(),
                     local_dir: local_dir.clone(),
                     peer_ip: target_addr.ip().to_string(),
+                    original_paths: paths.clone(),
+                    peer_addr: target_addr,
                 });
 
                 let observer = std::sync::Arc::new(crate::state::GuiTransferObserver {

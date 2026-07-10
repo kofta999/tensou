@@ -85,6 +85,8 @@ export global Logic {
     callback paste_from_clipboard() -> string;
     callback clear_clipboard_history();
     callback cancel_transfer(int);
+    callback pause_transfer(int);
+    callback resume_transfer(int);
     callback open_transfer_folder(int);
     callback change_download_dir();
     callback consent_response(int, bool); // transfer_id, accepted

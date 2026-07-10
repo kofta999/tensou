@@ -115,6 +115,8 @@ pub fn spawn_transfers(
                             cancel_token,
                             local_dir,
                             peer_ip,
+                            original_paths,
+                            peer_addr,
                         } => {
                             let peer_name = {
                                 let devices = local_devices.lock().unwrap();
@@ -129,28 +131,38 @@ pub fn spawn_transfers(
                                     .unwrap_or_else(|| peer_ip.clone())
                             };
 
-                            transfers.push(GuiTransfer {
-                                id: transfer_id,
-                                is_sender,
-                                job_name: job_name.clone(),
-                                total_bytes,
-                                bytes_transferred: bytes_done,
-                                bytes_done_at_start: bytes_done,
-                                start_time: std::time::Instant::now(),
-                                cancel_token,
-                                local_dir,
-                                status: "Active".to_string(),
-                                timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-                                peer_name,
-                            });
+                            if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                                t.cancel_token = cancel_token;
+                                t.bytes_done_at_start = bytes_done;
+                                t.bytes_transferred = bytes_done;
+                                t.start_time = std::time::Instant::now();
+                                t.status = "Active".to_string();
+                            } else {
+                                transfers.push(GuiTransfer {
+                                    id: transfer_id,
+                                    is_sender,
+                                    job_name: job_name.clone(),
+                                    total_bytes,
+                                    bytes_transferred: bytes_done,
+                                    bytes_done_at_start: bytes_done,
+                                    start_time: std::time::Instant::now(),
+                                    cancel_token,
+                                    local_dir,
+                                    status: "Active".to_string(),
+                                    timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                                    peer_name,
+                                    original_paths,
+                                    peer_addr,
+                                });
+
+                                show_toast(
+                                    main_window_weak_transfers.clone(),
+                                    format!("Started: {}", job_name),
+                                    ToastType::Info,
+                                );
+                            }
                             active_dirty = true;
                             completed_dirty = true;
-
-                            show_toast(
-                                main_window_weak_transfers.clone(),
-                                format!("Started: {}", job_name),
-                                ToastType::Info,
-                            );
                         }
                         GuiEvent::ChunkTransferred { transfer_id, bytes } => {
                             if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
@@ -178,18 +190,26 @@ pub fn spawn_transfers(
                             error,
                         } => {
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
-                                let mut failed_t = transfers.remove(pos);
-                                failed_t.status = if error.contains("Cancelled") || error.contains("cancelled") {
-                                    "Cancelled".to_string()
+                                if transfers[pos].status == "Paused" {
+                                    show_toast(
+                                        main_window_weak_transfers.clone(),
+                                        format!("Paused: {}", transfers[pos].job_name),
+                                        ToastType::Info,
+                                    );
                                 } else {
-                                    "Failed".to_string()
-                                };
-                                show_toast(
-                                    main_window_weak_transfers.clone(),
-                                    format!("{}: {}", failed_t.status, failed_t.job_name),
-                                    ToastType::Error,
-                                );
-                                completed_transfers.push(failed_t);
+                                    let mut failed_t = transfers.remove(pos);
+                                    failed_t.status = if error.contains("Cancelled") || error.contains("cancelled") {
+                                        "Cancelled".to_string()
+                                    } else {
+                                        "Failed".to_string()
+                                    };
+                                    show_toast(
+                                        main_window_weak_transfers.clone(),
+                                        format!("{}: {}", failed_t.status, failed_t.job_name),
+                                        ToastType::Error,
+                                    );
+                                    completed_transfers.push(failed_t);
+                                }
                             }
                             active_dirty = true;
                             completed_dirty = true;
@@ -264,7 +284,11 @@ pub fn spawn_transfers(
                                     // Speed is derived from newly transferred bytes only (not resumed portion)
                                     let elapsed = t.start_time.elapsed().as_secs_f64();
                                     let new_bytes = t.bytes_transferred.saturating_sub(t.bytes_done_at_start);
-                                    let speed_eta = if elapsed > 0.0 && new_bytes > 0 {
+                                    let speed_eta = if t.status == "Paused" {
+                                        "Paused".to_string()
+                                    } else if t.status == "Resuming..." {
+                                        "Resuming...".to_string()
+                                    } else if elapsed > 0.0 && new_bytes > 0 {
                                         let speed = new_bytes as f64 / elapsed;
                                         let speed_mb = speed / 1_048_576.0;
                                         let eta = remaining as f64 / speed;

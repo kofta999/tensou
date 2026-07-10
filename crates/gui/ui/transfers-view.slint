@@ -125,13 +125,28 @@ export component TransfersView inherits VerticalLayout {
                                     overflow: elide;
                                 }
 
-                                ZenButton {
-                                    text: "Cancel";
-                                    width: 72px;
-                                    height: 32px;
-                                    clicked => {
-                                        AppData.cancel_request = { transfer_id: transfer.id, job_name: transfer.job_name };
-                                        AppData.has_cancel_confirmation = true;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    if transfer.is_sender : ZenButton {
+                                        text: transfer.speed_eta == "Paused" ? "Resume" : "Pause";
+                                        width: 72px;
+                                        height: 32px;
+                                        clicked => {
+                                            if (transfer.speed_eta == "Paused") {
+                                                Logic.resume_transfer(transfer.id);
+                                            } else {
+                                                Logic.pause_transfer(transfer.id);
+                                            }
+                                        }
+                                    }
+                                    ZenButton {
+                                        text: "Cancel";
+                                        width: 72px;
+                                        height: 32px;
+                                        clicked => {
+                                            AppData.cancel_request = { transfer_id: transfer.id, job_name: transfer.job_name };
+                                            AppData.has_cancel_confirmation = true;
+                                        }
                                     }
                                 }
                             }
