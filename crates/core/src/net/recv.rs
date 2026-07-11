@@ -13,7 +13,7 @@ use mdns_sd::ServiceDaemon;
 use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
@@ -26,9 +26,9 @@ use uuid::Uuid;
 
 // Server listener
 pub struct ReceiverDaemon {
-    pub(super) endpoint: quinn::Endpoint,
-    pub(super) config: Arc<Mutex<Config>>,
-    pub(super) _discovery_daemon: Arc<Mutex<ServiceDaemon>>,
+    endpoint: quinn::Endpoint,
+    config: Arc<Mutex<Config>>,
+    _discovery_daemon: Arc<Mutex<ServiceDaemon>>,
 }
 
 impl ReceiverDaemon {
@@ -59,6 +59,7 @@ impl ReceiverDaemon {
         mut reload_rx: tokio::sync::mpsc::Receiver<()>,
     ) {
         let mut active_transfers: JoinSet<anyhow::Result<()>> = JoinSet::new();
+        let consented_transfers: Arc<Mutex<HashSet<Uuid>>> = Default::default();
 
         loop {
             tokio::select! {
@@ -76,7 +77,7 @@ impl ReceiverDaemon {
 
                 incoming = self.endpoint.accept() => {
                     let Some(incoming) = incoming else { break };
-                    self.handle_connection(incoming, &observer, &consent, &parent_cancel_token, &mut active_transfers);
+                    self.handle_connection(incoming, &observer, &consent, &parent_cancel_token, &mut active_transfers, consented_transfers.clone());
             }}
         }
 
@@ -95,6 +96,7 @@ impl ReceiverDaemon {
         consent: &Arc<dyn TransferConsentHandler>,
         parent_cancel_token: &CancellationToken,
         active_transfers: &mut JoinSet<anyhow::Result<()>>,
+        consented_transfers: Arc<Mutex<HashSet<Uuid>>>,
     ) {
         let target_dir_clone = {
             let config = self.config.lock().unwrap();
@@ -143,7 +145,14 @@ impl ReceiverDaemon {
                         config.auto_accept
                     };
 
-                    let is_accepted = if auto_accept {
+                    let already_consented = {
+                        consented_transfers
+                            .lock()
+                            .unwrap()
+                            .contains(&pending.request.transfer_id)
+                    };
+
+                    let is_accepted = if auto_accept || already_consented {
                         true
                     } else {
                         consent_clone
@@ -161,6 +170,10 @@ impl ReceiverDaemon {
                             config.overwrite_dest
                         };
                         let transfer_id = pending.request.transfer_id;
+
+                        {
+                            consented_transfers.lock().unwrap().insert(transfer_id);
+                        }
 
                         match pending
                             .accept(
@@ -209,13 +222,26 @@ impl ReceiverDaemon {
                                         }
                                     }
                                 }
+
+                                {
+                                    consented_transfers.lock().unwrap().remove(&transfer_id);
+                                }
                             }
                             Ok(AcceptResult::Text) => {
                                 observer_clone.on_transfer_complete(transfer_id);
                                 let _ = connection.closed().await;
+
+                                {
+                                    consented_transfers.lock().unwrap().remove(&transfer_id);
+                                }
                             }
                             Err(e) => {
                                 observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+
+                                {
+                                    consented_transfers.lock().unwrap().remove(&transfer_id);
+                                }
+
                                 return anyhow::Ok(());
                             }
                         }

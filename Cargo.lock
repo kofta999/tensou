@@ -806,6 +806,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -5385,6 +5386,7 @@ dependencies = [
  "async-trait",
  "bitvec",
  "blake3",
+ "chrono",
  "dirs",
  "file_diff",
  "fs4",

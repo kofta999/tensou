@@ -1,20 +1,23 @@
 use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE,
-    crypto::SkipServerVerification,
     disk::SendSession,
+    net::connection_manager::ConnectionManager,
     protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
 };
-use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct Sender {
-    connection: quinn::Connection,
+    connection_manager: ConnectionManager,
     sessions: HashMap<FileId, Arc<SendSession>>,
     remote_states: Vec<State>,
+    request: TransferRequest,
     pub transfer_id: Uuid,
     pub cancel_token: CancellationToken,
 }
@@ -57,16 +60,8 @@ impl Sender {
             ),
         };
 
-        let client_cfg = Self::configure_client()?;
-        let bind_addr: SocketAddr = "0.0.0.0:0".parse()?;
-        let mut endpoint = Endpoint::client(bind_addr)?;
-        endpoint.set_default_client_config(client_cfg);
-
-        log::info!("Connecting to remote receiver at {}...", server_addr);
-        let connection = endpoint.connect(server_addr, "localhost")?.await?;
-        log::debug!("QUIC connection established with {}", server_addr);
-
-        let (mut send, mut recv) = connection.open_bi().await?;
+        let connection_manager = ConnectionManager::connect(server_addr).await?;
+        let (mut send, mut recv) = connection_manager.open_bi().await?;
         let buf = rmp_serde::to_vec(&request)?;
 
         log::debug!("Sending manifest metadata...");
@@ -78,7 +73,7 @@ impl Sender {
             Ok(val) => val,
             Err(e) => {
                 if let Some(quinn::ConnectionError::ApplicationClosed(app_close)) =
-                    connection.close_reason()
+                    connection_manager.connection.close_reason()
                 {
                     let reason = String::from_utf8_lossy(&app_close.reason);
                     log::warn!("Transfer request rejected by remote: {}", reason);
@@ -104,9 +99,10 @@ impl Sender {
         log::debug!("Successfully loaded remote transfer state.");
 
         Ok(Some(Self {
-            connection,
+            connection_manager,
             sessions,
             remote_states,
+            request,
             cancel_token,
             transfer_id,
         }))
@@ -131,89 +127,144 @@ impl Sender {
             .saturating_sub(self.get_remaining_bytes())
     }
 
-    pub async fn process_chunks(self, observer: Arc<dyn TransferObserver>) -> anyhow::Result<()> {
-        let task_list = self.flatten();
-        let chunk_count = task_list.len();
+    pub fn get_connection(&self) -> quinn::Connection {
+        self.connection_manager.connection()
+    }
 
-        log::debug!("Preparing to transmit {} chunks...", chunk_count);
+    /// Outer loop: stream chunks, reconnect on connection loss, re-derive remaining work.
+    pub async fn process_chunks(
+        &mut self,
+        observer: Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        loop {
+            // Re-dervied from remote_states bitvec on reconnection
+            let task_list = self.flatten();
+            if task_list.is_empty() {
+                break;
+            }
 
-        let mut send = self.connection.open_uni().await?;
-        send.write_all(&rmp_serde::to_vec(&chunk_count)?).await?;
-        send.finish()?;
-
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));
-        let mut join_set = tokio::task::JoinSet::new();
-
-        for (file_id, chunk_id) in task_list {
-            let permit = semaphore.clone().acquire_owned().await?;
-            let session = self
-                .sessions
-                .get(&file_id)
-                .expect("file_id from flatten() missing in sessions");
-            let token_clone = self.cancel_token.clone();
-            let session_clone = session.clone();
-            let conn_clone = self.connection.clone();
-            let observer_clone = observer.clone();
-
-            join_set.spawn(async move {
-                tokio::select! {
-                    _ = token_clone.cancelled() => {
-                        return anyhow::Ok(())
-                    }
-
-                    stream_result = async {
-                        let mut stream = conn_clone.clone().open_uni().await?;
-                        let _permit = permit;
-
-                        let (header, buf) = session_clone.get_chunk(chunk_id).await?;
-                        let buf_len = buf.len() as u64;
-
-                        let header_bytes = rmp_serde::to_vec(&header)?;
-                        let header_len = header_bytes.len() as u32;
-
-                        stream.write_u32(header_len).await?;
-                        stream.write_all(&header_bytes).await?;
-
-                        stream.write_all(&buf).await?;
-                        drop(buf);
-
-                        stream.finish()?;
-
-                        observer_clone.on_chunk_transferred(self.transfer_id, buf_len);
-
-                        anyhow::Ok(())
-                    } => {
-                        stream_result?
-                    }
-                }
-
-                anyhow::Ok(())
-            });
-        }
-
-        while let Some(res) = join_set.join_next().await {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    log::error!("Chunk transmission failed: {e:?}");
+            match self.stream_chunks(task_list, &observer).await {
+                Ok(()) => break,
+                Err(e) if self.cancel_token.is_cancelled() => {
+                    self.connection_manager.close_with(1u32, b"Cancelled");
                     return Err(e);
                 }
+                Err(e) if Self::is_connection_error(&e) => {
+                    self.reconnect_and_resync(&observer).await?;
+                }
                 Err(e) => {
-                    log::error!("Chunk task panicked: {e:?}");
-                    return Err(e.into());
+                    println!("TEST_DEBUG_ERROR: {:?}", e);
+                    return Err(e);
                 }
             }
         }
 
-        if self.cancel_token.is_cancelled() {
-            log::info!("Transfer cancelled by sender.");
-            self.connection.close(1u32.into(), b"Cancelled by sender");
-        } else {
-            log::info!("All chunks transmitted successfully. Closing connection...");
-            self.connection.closed().await;
+        self.connection_manager.close_gracefully().await;
+        Ok(())
+    }
+
+    /// Inner dispatch: sends chunk count header, then slides a fixed-size JoinSet window.
+    async fn stream_chunks(
+        &self,
+        tasks: Vec<(FileId, ChunkIndex)>,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        // Tell receiver how many chunks to expect in this batch
+        let mut header = self.connection_manager.open_uni().await?;
+        header.write_all(&rmp_serde::to_vec(&tasks.len())?).await?;
+        header.finish()?;
+
+        let mut tasks = tasks.into_iter();
+        let mut in_flight = JoinSet::new();
+
+        // Fill initial window
+        for _ in 0..MAX_CONCURRENT_STREAMS {
+            if let Some((fid, cid)) = tasks.next() {
+                self.spawn_chunk(&mut in_flight, fid, cid, observer);
+            }
+        }
+
+        // Slide: as each completes, spawn its replacement
+        while let Some(result) = in_flight.join_next().await {
+            result??; // JoinError or chunk error → propagate
+            if let Some((fid, cid)) = tasks.next() {
+                self.spawn_chunk(&mut in_flight, fid, cid, observer);
+            }
         }
 
         Ok(())
+    }
+
+    /// Clones Arc'd/Copy data and spawns a single chunk send task.
+    fn spawn_chunk(
+        &self,
+        join_set: &mut JoinSet<anyhow::Result<()>>,
+        file_id: FileId,
+        chunk_id: ChunkIndex,
+        observer: &Arc<dyn TransferObserver>,
+    ) {
+        let conn = self.connection_manager.connection();
+        let session = self.sessions[&file_id].clone();
+        let observer = observer.clone();
+        let transfer_id = self.transfer_id;
+        let cancel = self.cancel_token.clone();
+
+        join_set.spawn(async move {
+            tokio::select! {
+                _ = cancel.cancelled() => Ok(()),
+                result = Self::send_chunk(&conn, &session, transfer_id, chunk_id, &observer) => result,
+            }
+        });
+    }
+
+    async fn send_chunk(
+        conn: &quinn::Connection,
+        session: &SendSession,
+        transfer_id: Uuid,
+        chunk_id: ChunkIndex,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        let mut stream = conn.open_uni().await?;
+        let (header, buf) = session.get_chunk(chunk_id).await?;
+        let buf_len = buf.len() as u64;
+
+        let header_bytes = rmp_serde::to_vec(&header)?;
+        stream.write_u32(header_bytes.len() as u32).await?;
+        stream.write_all(&header_bytes).await?;
+        stream.write_all(&buf).await?;
+        stream.finish()?;
+
+        observer.on_chunk_transferred(transfer_id, buf_len);
+        Ok(())
+    }
+
+    /// Reconnect and re-handshake, getting fresh remote bitvec state.
+    async fn reconnect_and_resync(
+        &mut self,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        self.connection_manager
+            .reconnect(self.transfer_id, observer.as_ref(), &self.cancel_token)
+            .await?;
+        self.remote_states = self.resend_manifest().await?;
+        Ok(())
+    }
+
+    /// Re-sends the stored TransferRequest (same UUID) and reads fresh bitvec from receiver.
+    async fn resend_manifest(&self) -> anyhow::Result<Vec<State>> {
+        let (mut send, mut recv) = self.connection_manager.open_bi().await?;
+        let buf = rmp_serde::to_vec(&self.request)?;
+        send.write_all(&buf).await?;
+        send.finish()?;
+
+        // Read consent byte (receiver auto-accepts on UUID match)
+        let accepted = recv.read_u8().await?;
+        if accepted == 0 {
+            anyhow::bail!("Receiver rejected reconnect");
+        }
+
+        let buf = recv.read_to_end(MAX_REQUEST_SIZE as usize).await?;
+        Ok(rmp_serde::from_slice(&buf)?)
     }
 
     fn flatten(&self) -> Vec<(FileId, ChunkIndex)> {
@@ -237,14 +288,45 @@ impl Sender {
         arr
     }
 
-    fn configure_client() -> anyhow::Result<ClientConfig> {
-        let rustls_config = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(SkipServerVerification::new())
-            .with_no_client_auth();
+    fn is_connection_error(e: &anyhow::Error) -> bool {
+        for cause in e.chain() {
+            if let Some(we) = cause.downcast_ref::<quinn::WriteError>() {
+                if let quinn::WriteError::ConnectionLost(ce) = we {
+                    if Self::is_quinn_connection_error(ce) {
+                        return true;
+                    }
+                }
+            }
+            if let Some(ce) = cause.downcast_ref::<quinn::ConnectionError>() {
+                if Self::is_quinn_connection_error(ce) {
+                    return true;
+                }
+            }
+            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                if io_err.kind() == std::io::ErrorKind::ConnectionReset
+                    || io_err.kind() == std::io::ErrorKind::ConnectionAborted
+                    || io_err.kind() == std::io::ErrorKind::NotConnected
+                    || io_err.kind() == std::io::ErrorKind::BrokenPipe
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
-        Ok(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
-            rustls_config,
-        )?)))
+    fn is_quinn_connection_error(e: &quinn::ConnectionError) -> bool {
+        match e {
+            quinn::ConnectionError::TimedOut
+            | quinn::ConnectionError::Reset
+            | quinn::ConnectionError::TransportError(_)
+            | quinn::ConnectionError::LocallyClosed
+            | quinn::ConnectionError::ConnectionClosed(_) => true,
+            quinn::ConnectionError::ApplicationClosed(app_close) => {
+                let reason = String::from_utf8_lossy(&app_close.reason);
+                !reason.contains("Cancelled") && !reason.contains("rejected")
+            }
+            _ => false,
+        }
     }
 }

@@ -1,6 +1,7 @@
 use crate::GuiTransfer;
 use crate::state::ConsentRegistry;
 use crate::state::GuiEvent;
+use crate::state::TransferStatus;
 use crate::views::AppData;
 use crate::views::Logic;
 use crate::views::MainWindow;
@@ -200,7 +201,7 @@ pub fn setup(
             log::info!("Pause clicked for transfer: {}", transfer_id);
             let mut transfers = local_transfers.lock().unwrap();
             if let Some(transfer) = transfers.iter_mut().find(|t| transfer_id == t.id) {
-                transfer.status = "Paused".to_string();
+                transfer.status = TransferStatus::Paused;
                 transfer.cancel_token.cancel();
             }
         }
@@ -215,7 +216,7 @@ pub fn setup(
             log::info!("Resume clicked for transfer: {}", transfer_id);
             let mut transfers = local_transfers.lock().unwrap();
             if let Some(transfer) = transfers.iter_mut().find(|t| transfer_id == t.id) {
-                transfer.status = "Resuming...".to_string();
+                transfer.status = TransferStatus::Resuming;
 
                 let target_addr = transfer.peer_addr;
                 let paths = transfer.original_paths.clone();
@@ -417,7 +418,7 @@ fn send_file_background(
         )
         .await
         {
-            Ok(Some(client)) => {
+            Ok(Some(mut client)) => {
                 // Determine a safe base parent directory to store completed reference
                 let local_dir = paths[0]
                     .parent()

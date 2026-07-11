@@ -205,6 +205,8 @@ pub trait TransferObserver: Send + Sync {
     fn on_transfer_failed(&self, _transfer_id: Uuid, _error: &str) {}
     /// Called when a text/clipboard sharing event is received and accepted.
     fn on_text_received(&self, _peer: SocketAddr, _job_name: String, _content: String) {}
+    fn on_reconnecting(&self, _transfer_uuid: Uuid, _attempt: u32) {}
+    fn on_reconnected(&self, _transfer_uuid: Uuid) {}
 }
 
 #[async_trait]

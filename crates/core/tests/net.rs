@@ -101,7 +101,7 @@ async fn test_full_network_transfer() -> anyhow::Result<()> {
     )
     .await;
 
-    let client = Sender::connect(
+    let mut client = Sender::connect(
         addr,
         SendType::Files(&[source_path.clone()]),
         make_sender_info(),
@@ -151,7 +151,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
     )
     .await;
 
-    let client_1 = Sender::connect(
+    let mut client_1 = Sender::connect(
         addr,
         SendType::Files(&[source_path_1.clone()]),
         make_sender_info(),
@@ -163,7 +163,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
     client_1.process_chunks(Arc::new(TestObserver {})).await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client_2 = Sender::connect(
+    let mut client_2 = Sender::connect(
         addr,
         SendType::Files(&[source_path_2_named_same.clone()]),
         make_sender_info(),
@@ -243,7 +243,7 @@ async fn test_directory_transfer() -> anyhow::Result<()> {
     )
     .await;
 
-    let client = Sender::connect(
+    let mut client = Sender::connect(
         addr,
         SendType::Files(&[job_dir.clone()]),
         make_sender_info(),
@@ -294,7 +294,7 @@ async fn test_sender_cancel_leaves_partial_files() -> anyhow::Result<()> {
 
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
-    let client = Sender::connect(
+    let mut client = Sender::connect(
         addr,
         SendType::Files(&[source_path]),
         make_sender_info(),
@@ -350,7 +350,7 @@ async fn test_receiver_cancel_leaves_partial_files() -> anyhow::Result<()> {
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let client = Sender::connect(
+    let mut client = Sender::connect(
         addr,
         SendType::Files(&[source_path]),
         make_sender_info(),
@@ -404,7 +404,7 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
     .await;
 
     let start = std::time::Instant::now();
-    let client = Sender::connect(
+    let mut client = Sender::connect(
         addr,
         SendType::Files(&[source_folder.clone()]),
         make_sender_info(),
@@ -443,6 +443,76 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
             "File diff should match"
         );
     }
+
+    server_handle.abort();
+    Ok(())
+}
+
+/// Verifies that a connection drop during transfer is automatically recovered
+/// by the auto-reconnect logic and the file completes successfully.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_reconnect_resumes_after_connection_drop() -> anyhow::Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let source_dir = tempdir()?;
+    let dest_dir = tempdir()?;
+    let source_path = source_dir.path().join("drop_source.bin");
+
+    // Make a 15MB file so we have plenty of chunks to ensure we drop mid-transfer
+    let mut buffer = vec![0u8; 15 * 1024 * 1024];
+    rand::rng().fill_bytes(&mut buffer);
+    std::fs::write(&source_path, &buffer)?;
+
+    let (addr, server_handle) = spawn_daemon(
+        make_config(dest_dir.path(), true),
+        Arc::new(AutoAccept),
+        Arc::new(TestObserver),
+    )
+    .await;
+
+    let mut client = Sender::connect(
+        addr,
+        SendType::Files(&[source_path.clone()]),
+        make_sender_info(),
+        CancellationToken::new(),
+        Uuid::new_v4(),
+    )
+    .await?
+    .unwrap();
+
+    struct ReconnectTestObserver {
+        conn: Mutex<Option<quinn::Connection>>,
+        dropped: Mutex<bool>,
+    }
+
+    impl TransferObserver for ReconnectTestObserver {
+        fn on_chunk_transferred(&self, _id: Uuid, _bytes: u64) {
+            let mut dropped = self.dropped.lock().unwrap();
+            if !*dropped {
+                if let Some(conn) = self.conn.lock().unwrap().take() {
+                    log::warn!("TEST: Simulating connection drop by closing connection...");
+                    conn.close(0u32.into(), b"SimulatedNetworkDrop");
+                    *dropped = true;
+                }
+            }
+        }
+    }
+
+    let observer = Arc::new(ReconnectTestObserver {
+        conn: Mutex::new(Some(client.get_connection())),
+        dropped: Mutex::new(false),
+    });
+
+    client.process_chunks(observer).await?;
+
+    let dest_path = dest_dir.path().join("drop_source.bin");
+    assert!(
+        dest_path.exists(),
+        "Destination file should exist"
+    );
+    assert!(
+        file_diff::diff(source_path.to_str().unwrap(), dest_path.to_str().unwrap()),
+        "File diff should match after reconnect resume"
+    );
 
     server_handle.abort();
     Ok(())

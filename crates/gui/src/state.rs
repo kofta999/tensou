@@ -70,6 +70,31 @@ impl From<DiscoveredDevice> for GuiDevice {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferStatus {
+    Active,
+    Paused,
+    Resuming,
+    Reconnecting { attempt: u32 },
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl std::fmt::Display for TransferStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Active => write!(f, "Active"),
+            Self::Paused => write!(f, "Paused"),
+            Self::Resuming => write!(f, "Resuming..."),
+            Self::Reconnecting { attempt } => write!(f, "Reconnecting ({})", attempt),
+            Self::Completed => write!(f, "Completed"),
+            Self::Failed => write!(f, "Failed"),
+            Self::Cancelled => write!(f, "Cancelled"),
+        }
+    }
+}
+
 pub struct GuiTransfer {
     pub id: String,
     pub is_sender: bool,
@@ -80,7 +105,7 @@ pub struct GuiTransfer {
     pub start_time: Instant,
     pub cancel_token: CancellationToken,
     pub local_dir: std::path::PathBuf,
-    pub status: String,
+    pub status: TransferStatus,
     pub timestamp: String,
     pub peer_name: String,
     pub original_paths: Vec<std::path::PathBuf>,
@@ -121,6 +146,13 @@ pub enum GuiEvent {
         job_name: String,
         content: String,
         peer_ip: String,
+    },
+    TransferReconnecting {
+        transfer_id: String,
+        attempt: u32,
+    },
+    TransferReconnected {
+        transfer_id: String,
     },
 }
 
@@ -171,6 +203,19 @@ impl TransferObserver for GuiTransferObserver {
         let _ = self.tx.send(GuiEvent::TransferFailed {
             transfer_id: transfer_id.to_string(),
             error: error.to_string(),
+        });
+    }
+
+    fn on_reconnecting(&self, transfer_uuid: Uuid, attempt: u32) {
+        let _ = self.tx.send(GuiEvent::TransferReconnecting {
+            transfer_id: transfer_uuid.to_string(),
+            attempt,
+        });
+    }
+
+    fn on_reconnected(&self, transfer_uuid: Uuid) {
+        let _ = self.tx.send(GuiEvent::TransferReconnected {
+            transfer_id: transfer_uuid.to_string(),
         });
     }
 

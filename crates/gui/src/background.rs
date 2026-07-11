@@ -1,6 +1,7 @@
 use crate::GuiDevice;
 use crate::GuiTransfer;
 use crate::state::GuiEvent;
+use crate::state::TransferStatus;
 use crate::views::ToastType;
 use crate::views::{
     AppData, ClipboardMessage, ConsentRequest, Device, MainWindow, ToastData, Transfer,
@@ -131,12 +132,13 @@ pub fn spawn_transfers(
                                     .unwrap_or_else(|| peer_ip.clone())
                             };
 
-                            if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                             if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                                 dbg!(&t.id);
                                 t.cancel_token = cancel_token;
                                 t.bytes_done_at_start = bytes_done;
                                 t.bytes_transferred = bytes_done;
                                 t.start_time = std::time::Instant::now();
-                                t.status = "Active".to_string();
+                                t.status = TransferStatus::Active;
                             } else {
                                 transfers.push(GuiTransfer {
                                     id: transfer_id,
@@ -148,12 +150,13 @@ pub fn spawn_transfers(
                                     start_time: std::time::Instant::now(),
                                     cancel_token,
                                     local_dir,
-                                    status: "Active".to_string(),
+                                    status: TransferStatus::Active,
                                     timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                                     peer_name,
                                     original_paths,
                                     peer_addr,
                                 });
+                                dbg!(transfers.len());
 
                                 show_toast(
                                     main_window_weak_transfers.clone(),
@@ -174,7 +177,7 @@ pub fn spawn_transfers(
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
                                 let mut completed_t = transfers.remove(pos);
                                 completed_t.bytes_transferred = completed_t.total_bytes;
-                                completed_t.status = "Completed".to_string();
+                                completed_t.status = TransferStatus::Completed;
                                 show_toast(
                                     main_window_weak_transfers.clone(),
                                     format!("Completed: {}", completed_t.job_name),
@@ -190,7 +193,7 @@ pub fn spawn_transfers(
                             error,
                         } => {
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
-                                if transfers[pos].status == "Paused" {
+                                if transfers[pos].status == TransferStatus::Paused {
                                     show_toast(
                                         main_window_weak_transfers.clone(),
                                         format!("Paused: {}", transfers[pos].job_name),
@@ -199,9 +202,9 @@ pub fn spawn_transfers(
                                 } else {
                                     let mut failed_t = transfers.remove(pos);
                                     failed_t.status = if error.contains("Cancelled") || error.contains("cancelled") {
-                                        "Cancelled".to_string()
+                                        TransferStatus::Cancelled
                                     } else {
-                                        "Failed".to_string()
+                                        TransferStatus::Failed
                                     };
                                     show_toast(
                                         main_window_weak_transfers.clone(),
@@ -257,6 +260,20 @@ pub fn spawn_transfers(
                             consent_to_set = Some((true, transfer_id, peer.ip().to_string(), sender, job_name));
                             active_dirty = true; // Refresh to show consent modal
                         }
+                        GuiEvent::TransferReconnecting { transfer_id, attempt } => {
+                            if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                                t.status = TransferStatus::Reconnecting { attempt };
+                            }
+                            active_dirty = true;
+                        }
+                        GuiEvent::TransferReconnected { transfer_id } => {
+                            if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                                t.status = TransferStatus::Active;
+                                t.start_time = std::time::Instant::now();
+                                t.bytes_done_at_start = t.bytes_transferred;
+                            }
+                            active_dirty = true;
+                        }
                     }
                 }
                 _ = interval.tick() => {
@@ -281,20 +298,24 @@ pub fn spawn_transfers(
                                         0.0
                                     };
 
-                                    // Speed is derived from newly transferred bytes only (not resumed portion)
                                     let elapsed = t.start_time.elapsed().as_secs_f64();
                                     let new_bytes = t.bytes_transferred.saturating_sub(t.bytes_done_at_start);
-                                    let speed_eta = if t.status == "Paused" {
-                                        "Paused".to_string()
-                                    } else if t.status == "Resuming..." {
-                                        "Resuming...".to_string()
-                                    } else if elapsed > 0.0 && new_bytes > 0 {
-                                        let speed = new_bytes as f64 / elapsed;
-                                        let speed_mb = speed / 1_048_576.0;
-                                        let eta = remaining as f64 / speed;
-                                        format!("{:.1} MB/s | ETA: {:.0}s", speed_mb, eta)
-                                    } else {
-                                        "Waiting...".to_string()
+                                    let speed_eta = match &t.status {
+                                        TransferStatus::Reconnecting { attempt } => {
+                                            format!("Reconnecting ({})", attempt)
+                                        }
+                                        TransferStatus::Paused => "Paused".to_string(),
+                                        TransferStatus::Resuming => "Resuming...".to_string(),
+                                        _ => {
+                                            if elapsed > 0.0 && new_bytes > 0 {
+                                                let speed = new_bytes as f64 / elapsed;
+                                                let speed_mb = speed / 1_048_576.0;
+                                                let eta = remaining as f64 / speed;
+                                                format!("{:.1} MB/s | ETA: {:.0}s", speed_mb, eta)
+                                            } else {
+                                                "Waiting...".to_string()
+                                            }
+                                        }
                                     };
 
                                     let bytes_label = if t.bytes_done_at_start > 0 {
@@ -335,7 +356,7 @@ pub fn spawn_transfers(
                                         total_bytes: format!("{:.1} MB", total_mb).into(),
                                         bytes_transferred: format!("{:.1} MB", total_mb).into(),
                                         progress: 1.0,
-                                        speed_eta: t.status.clone().into(),
+                                        speed_eta: t.status.to_string().into(),
                                         timestamp: t.timestamp.clone().into(),
                                         peer_name: t.peer_name.clone().into(),
                                     }

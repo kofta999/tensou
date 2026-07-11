@@ -18,11 +18,25 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-struct CliSendTransfer(ProgressBar);
+struct CliSendTransfer {
+    pb: ProgressBar,
+    job_name: String,
+}
 
 impl TransferObserver for CliSendTransfer {
     fn on_chunk_transferred(&self, _: Uuid, bytes: u64) {
-        self.0.inc(bytes);
+        self.pb.inc(bytes);
+    }
+
+    fn on_reconnecting(&self, _transfer_uuid: Uuid, attempt: u32) {
+        self.pb.set_message(format!(
+            "⚠ Connection lost. Reconnecting (attempt {})...",
+            attempt
+        ));
+    }
+
+    fn on_reconnected(&self, _transfer_uuid: Uuid) {
+        self.pb.set_message(format!("Sending: {}", self.job_name));
     }
 }
 
@@ -124,7 +138,7 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
         cancel_clone.cancel();
     });
 
-    let client = Sender::connect(
+    let mut client = Sender::connect(
         selected_addr,
         SendType::Files(&paths),
         sender_info,
@@ -139,8 +153,14 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
     let pb = create_transfer_pb(total_bytes, &display_name, true);
     pb.set_position(bytes_done);
 
-    let transfer_handle =
-        tokio::spawn(async move { client.process_chunks(Arc::new(CliSendTransfer(pb))).await });
+    let transfer_handle = tokio::spawn(async move {
+        client
+            .process_chunks(Arc::new(CliSendTransfer {
+                pb,
+                job_name: display_name.clone(),
+            }))
+            .await
+    });
 
     transfer_handle.await??;
 
