@@ -10,9 +10,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use tensou_core::config::Config;
 use tensou_core::net;
-use tensou_core::protocol::SenderInfo;
+use tensou_core::protocol::{SenderInfo, TransferError};
 use tensou_core::util::generate_job_name;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -178,31 +179,63 @@ pub fn setup(
 
     // Cancel Transfer
     let event_clone = event_tx.clone();
+    let config_cancel_clone = config.clone();
     main_window.global::<Logic>().on_cancel_transfer({
         let local_transfers = local_transfers.clone();
         move |transfer_id| {
             log::info!("Cancel clicked for transfer: {}", transfer_id);
             let transfers = local_transfers.lock().unwrap();
             if let Some(transfer) = transfers.iter().find(|t| transfer_id == t.id) {
+                let is_paused = transfer.status == TransferStatus::Paused;
                 transfer.cancel_token.cancel();
 
                 let _ = event_clone.send(GuiEvent::TransferFailed {
                     transfer_id: transfer_id.to_string(),
-                    error: "Transfer Cancelled".to_string(),
+                    error: TransferError::Cancelled,
                 });
+
+                if is_paused {
+                    let target_addr = transfer.peer_addr;
+                    let sender_info = SenderInfo::from(&*config_cancel_clone.lock().unwrap());
+                    let transfer_uuid =
+                        Uuid::parse_str(&transfer_id).expect("Must be a valid UUID");
+                    let paths = transfer.original_paths.clone();
+                    tokio::spawn(async move {
+                        log::info!("Connecting to receiver to send cancel signal...");
+                        if let Ok(Some(client)) = net::Sender::connect(
+                            target_addr,
+                            net::SendType::Files(&paths),
+                            sender_info,
+                            CancellationToken::new(),
+                            transfer_uuid,
+                        )
+                        .await
+                        {
+                            client.close_with_error(&TransferError::Cancelled);
+                        }
+                    });
+                }
             }
         }
     });
 
     // Pause Transfer
+    let event_pause_tx = event_tx.clone();
     main_window.global::<Logic>().on_pause_transfer({
         let local_transfers = local_transfers.clone();
         move |transfer_id| {
-            log::info!("Pause clicked for transfer: {}", transfer_id);
+            log::info!("Pause clicked for transfer: {}", transfer_id,);
             let mut transfers = local_transfers.lock().unwrap();
             if let Some(transfer) = transfers.iter_mut().find(|t| transfer_id == t.id) {
                 transfer.status = TransferStatus::Paused;
+                transfer
+                    .is_paused
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 transfer.cancel_token.cancel();
+
+                let _ = event_pause_tx.send(GuiEvent::TransferPaused {
+                    transfer_id: transfer_id.to_string(),
+                });
             }
         }
     });
@@ -213,14 +246,21 @@ pub fn setup(
         let local_transfers = local_transfers.clone();
         let config = config.clone();
         move |transfer_id| {
-            log::info!("Resume clicked for transfer: {}", transfer_id);
+            log::info!("Resume clicked for transfer: {}", transfer_id,);
             let mut transfers = local_transfers.lock().unwrap();
             if let Some(transfer) = transfers.iter_mut().find(|t| transfer_id == t.id) {
                 transfer.status = TransferStatus::Resuming;
+                transfer
+                    .is_paused
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
 
                 let target_addr = transfer.peer_addr;
                 let paths = transfer.original_paths.clone();
                 let sender_info = SenderInfo::from(&*config.lock().unwrap());
+
+                let _ = event_resume_clone.send(GuiEvent::TransferResuming {
+                    transfer_id: transfer_id.to_string(),
+                });
 
                 send_file_background(
                     event_resume_clone.clone(),
@@ -408,6 +448,7 @@ fn send_file_background(
 
     tokio::spawn(async move {
         let job_name = generate_job_name(&paths);
+        let is_paused = Arc::new(AtomicBool::new(false));
 
         match net::Sender::connect(
             target_addr,
@@ -430,6 +471,7 @@ fn send_file_background(
                 let _ = tx_clone.send(GuiEvent::TransferStarted {
                     transfer_id: transfer_id.to_string(),
                     is_sender: true,
+                    is_paused: is_paused.clone(),
                     job_name,
                     total_bytes,
                     bytes_done,
@@ -446,25 +488,42 @@ fn send_file_background(
                     target_dir: local_dir,
                 });
 
-                match client.process_chunks(observer).await {
+                match client.process_chunks(observer, is_paused).await {
                     Ok(()) => {
                         let _ = tx_clone.send(GuiEvent::TransferFinished {
                             transfer_id: transfer_id.to_string(),
                         });
                     }
+                    Err(_) if client.cancel_token.is_cancelled() => {
+                        // Intentional pause or cancel — send.rs already closed
+                        // the connection with the appropriate reason ("Paused" or
+                        // "Cancelled"). The GUI state machine already set the
+                        // correct status before triggering the token, so we
+                        // don't fire a redundant TransferFailed event here.
+                    }
                     Err(e) => {
+                        let error = if net::Sender::is_connection_error(&e) {
+                            TransferError::ConnectionLoss
+                        } else {
+                            TransferError::Other(e.to_string())
+                        };
                         let _ = tx_clone.send(GuiEvent::TransferFailed {
                             transfer_id: transfer_id.to_string(),
-                            error: e.to_string(),
+                            error,
                         });
                     }
                 }
             }
             Ok(None) => {}
             Err(e) => {
+                let error = if net::Sender::is_connection_error(&e) {
+                    TransferError::ConnectionLoss
+                } else {
+                    TransferError::Other(format!("Connection failed: {}", e))
+                };
                 let _ = tx_clone.send(GuiEvent::TransferFailed {
                     transfer_id: transfer_id.to_string(),
-                    error: format!("Connection failed: {}", e),
+                    error,
                 });
             }
         }

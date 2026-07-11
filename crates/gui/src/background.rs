@@ -9,6 +9,7 @@ use crate::views::{
 use slint::{ComponentHandle, Model, Weak};
 use std::sync::{Arc, Mutex};
 use tensou_core::discovery::DiscoveryEvent;
+use tensou_core::protocol::TransferError;
 use tokio::sync::mpsc;
 
 /// Background task to process mDNS discovery
@@ -110,6 +111,7 @@ pub fn spawn_transfers(
                         GuiEvent::TransferStarted {
                             transfer_id,
                             is_sender,
+                            is_paused,
                             job_name,
                             total_bytes,
                             bytes_done,
@@ -143,6 +145,7 @@ pub fn spawn_transfers(
                                 transfers.push(GuiTransfer {
                                     id: transfer_id,
                                     is_sender,
+                                    is_paused,
                                     job_name: job_name.clone(),
                                     total_bytes,
                                     bytes_transferred: bytes_done,
@@ -173,7 +176,7 @@ pub fn spawn_transfers(
                             }
                             active_dirty = true;
                         }
-                        GuiEvent::TransferFinished { transfer_id } => {
+                        GuiEvent::TransferFinished { transfer_id, } => {
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
                                 let mut completed_t = transfers.remove(pos);
                                 completed_t.bytes_transferred = completed_t.total_bytes;
@@ -193,22 +196,35 @@ pub fn spawn_transfers(
                             error,
                         } => {
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
-                                if transfers[pos].status == TransferStatus::Paused {
+                                dbg!(&transfers[pos], &error);
+                                if error == TransferError::Cancelled {
+                                    let mut failed_t = transfers.remove(pos);
+                                    failed_t.status = TransferStatus::Cancelled;
+                                    show_toast(
+                                        main_window_weak_transfers.clone(),
+                                        format!("Cancelled: {}", failed_t.job_name),
+                                        ToastType::Error,
+                                    );
+                                    completed_transfers.push(failed_t);
+                                } else if transfers[pos].status == TransferStatus::Paused {
                                     show_toast(
                                         main_window_weak_transfers.clone(),
                                         format!("Paused: {}", transfers[pos].job_name),
                                         ToastType::Info,
                                     );
-                                } else {
-                                    let mut failed_t = transfers.remove(pos);
-                                    failed_t.status = if error.contains("Cancelled") || error.contains("cancelled") {
-                                        TransferStatus::Cancelled
-                                    } else {
-                                        TransferStatus::Failed
-                                    };
+                                } else if !transfers[pos].is_sender && error == TransferError::ConnectionLoss {
+                                    transfers[pos].status = TransferStatus::Paused;
                                     show_toast(
                                         main_window_weak_transfers.clone(),
-                                        format!("{}: {}", failed_t.status, failed_t.job_name),
+                                        format!("Connection suspended. Waiting for sender: {}", transfers[pos].job_name),
+                                        ToastType::Info,
+                                    );
+                                } else {
+                                    let mut failed_t = transfers.remove(pos);
+                                    failed_t.status = TransferStatus::Failed;
+                                    show_toast(
+                                        main_window_weak_transfers.clone(),
+                                        format!("Failed: {}", failed_t.job_name),
                                         ToastType::Error,
                                     );
                                     completed_transfers.push(failed_t);
@@ -266,11 +282,23 @@ pub fn spawn_transfers(
                             }
                             active_dirty = true;
                         }
-                        GuiEvent::TransferReconnected { transfer_id } => {
+                        GuiEvent::TransferReconnected { transfer_id, } => {
                             if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
                                 t.status = TransferStatus::Active;
                                 t.start_time = std::time::Instant::now();
                                 t.bytes_done_at_start = t.bytes_transferred;
+                            }
+                            active_dirty = true;
+                        }
+                        GuiEvent::TransferPaused { transfer_id } => {
+                            if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                                t.status = TransferStatus::Paused;
+                            }
+                            active_dirty = true;
+                        }
+                        GuiEvent::TransferResuming { transfer_id, } => {
+                            if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
+                                t.status = TransferStatus::Resuming;
                             }
                             active_dirty = true;
                         }

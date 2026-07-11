@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use tensou_core::config::Config;
 use tensou_core::net::ReceiverDaemon;
 use tensou_core::net::SendType;
@@ -110,7 +111,9 @@ async fn test_full_network_transfer() -> anyhow::Result<()> {
     )
     .await?
     .unwrap();
-    client.process_chunks(Arc::new(TestObserver {})).await?;
+    client
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     assert!(file_diff::diff(
@@ -160,7 +163,9 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
     )
     .await?
     .unwrap();
-    client_1.process_chunks(Arc::new(TestObserver {})).await?;
+    client_1
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut client_2 = Sender::connect(
@@ -172,7 +177,9 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
     )
     .await?
     .unwrap();
-    client_2.process_chunks(Arc::new(TestObserver {})).await?;
+    client_2
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     assert!(file_diff::diff(
@@ -252,7 +259,9 @@ async fn test_directory_transfer() -> anyhow::Result<()> {
     )
     .await?
     .unwrap();
-    client.process_chunks(Arc::new(TestObserver {})).await?;
+    client
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let received_job = dest_dir.path().join("job");
@@ -309,7 +318,9 @@ async fn test_sender_cancel_leaves_partial_files() -> anyhow::Result<()> {
         cancel_clone.cancel();
     });
 
-    let _ = client.process_chunks(Arc::new(TestObserver {})).await;
+    let _ = client
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let staging_dir = dest_dir.path().join(".tensou");
@@ -365,7 +376,9 @@ async fn test_receiver_cancel_leaves_partial_files() -> anyhow::Result<()> {
         parent_cancel.cancel();
     });
 
-    let _ = client.process_chunks(Arc::new(TestObserver {})).await;
+    let _ = client
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let staging_dir = dest_dir.path().join(".tensou");
@@ -413,7 +426,9 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
     )
     .await?
     .unwrap();
-    client.process_chunks(Arc::new(TestObserver {})).await?;
+    client
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await?;
     let elapsed = start.elapsed();
 
     let total_size = num_files * file_size;
@@ -502,13 +517,12 @@ async fn test_reconnect_resumes_after_connection_drop() -> anyhow::Result<()> {
         dropped: Mutex::new(false),
     });
 
-    client.process_chunks(observer).await?;
+    client
+        .process_chunks(observer, Arc::new(AtomicBool::new(false)))
+        .await?;
 
     let dest_path = dest_dir.path().join("drop_source.bin");
-    assert!(
-        dest_path.exists(),
-        "Destination file should exist"
-    );
+    assert!(dest_path.exists(), "Destination file should exist");
     assert!(
         file_diff::diff(source_path.to_str().unwrap(), dest_path.to_str().unwrap()),
         "File diff should match after reconnect resume"

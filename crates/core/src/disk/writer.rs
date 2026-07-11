@@ -2,7 +2,7 @@ use crate::{
     disk::TransferStaging,
     protocol::{
         ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
-        State, TransferObserver,
+        State, TransferError, TransferObserver,
     },
 };
 use std::sync::{Arc, Mutex};
@@ -70,10 +70,10 @@ impl DiskWriter {
 
                             // Cancel transfer on chunk hash failure (rare to happen, user can resume later)
                             if !self.write_chunk(packet).await? {
-                                self.observer.on_transfer_failed(
+                                 self.observer.on_transfer_failed(
                                     self.transfer_id,
-                                    "Chunk integrity check failed — retry the transfer",
-                                );
+                                    &TransferError::Other("Chunk integrity check failed — retry the transfer".to_string()),
+                                 );
                                 self.cancel_token.cancel();
                             } else {
                                 chunks_since_save += 1;

@@ -4,7 +4,12 @@ use crate::{
     net::connection_manager::ConnectionManager,
     protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
 };
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
@@ -131,10 +136,19 @@ impl Sender {
         self.connection_manager.connection()
     }
 
+    pub fn close_with_error(&self, err: &protocol::TransferError) {
+        self.connection_manager.close_with(err.to_code(), b"");
+    }
+
+    pub fn close_successfully(&self) {
+        self.connection_manager.close_with(0, b"");
+    }
+
     /// Outer loop: stream chunks, reconnect on connection loss, re-derive remaining work.
     pub async fn process_chunks(
         &mut self,
         observer: Arc<dyn TransferObserver>,
+        is_paused: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         loop {
             // Re-dervied from remote_states bitvec on reconnection
@@ -146,7 +160,12 @@ impl Sender {
             match self.stream_chunks(task_list, &observer).await {
                 Ok(()) => break,
                 Err(e) if self.cancel_token.is_cancelled() => {
-                    self.connection_manager.close_with(1u32, b"Cancelled");
+                    let err = if is_paused.load(std::sync::atomic::Ordering::Relaxed) {
+                        protocol::TransferError::ConnectionLoss
+                    } else {
+                        protocol::TransferError::Cancelled
+                    };
+                    self.close_with_error(&err);
                     return Err(e);
                 }
                 Err(e) if Self::is_connection_error(&e) => {
@@ -187,6 +206,9 @@ impl Sender {
         // Slide: as each completes, spawn its replacement
         while let Some(result) = in_flight.join_next().await {
             result??; // JoinError or chunk error → propagate
+            if self.cancel_token.is_cancelled() {
+                anyhow::bail!("Transfer cancelled or paused");
+            }
             if let Some((fid, cid)) = tasks.next() {
                 self.spawn_chunk(&mut in_flight, fid, cid, observer);
             }
@@ -288,7 +310,7 @@ impl Sender {
         arr
     }
 
-    fn is_connection_error(e: &anyhow::Error) -> bool {
+    pub fn is_connection_error(e: &anyhow::Error) -> bool {
         for cause in e.chain() {
             if let Some(we) = cause.downcast_ref::<quinn::WriteError>() {
                 if let quinn::WriteError::ConnectionLost(ce) = we {

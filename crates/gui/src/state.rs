@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tensou_core::discovery::DiscoveredDevice;
-use tensou_core::protocol::{SenderInfo, TransferConsentHandler, TransferObserver};
+use tensou_core::protocol::{SenderInfo, TransferConsentHandler, TransferError, TransferObserver};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -95,9 +96,11 @@ impl std::fmt::Display for TransferStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct GuiTransfer {
     pub id: String,
     pub is_sender: bool,
+    pub is_paused: Arc<AtomicBool>,
     pub job_name: String,
     pub total_bytes: u64,
     pub bytes_transferred: u64,
@@ -116,6 +119,7 @@ pub enum GuiEvent {
     TransferStarted {
         transfer_id: String,
         is_sender: bool,
+        is_paused: Arc<AtomicBool>,
         job_name: String,
         total_bytes: u64,
         bytes_done: u64,
@@ -134,7 +138,7 @@ pub enum GuiEvent {
     },
     TransferFailed {
         transfer_id: String,
-        error: String,
+        error: TransferError,
     },
     IncomingConsentRequest {
         transfer_id: String,
@@ -152,6 +156,12 @@ pub enum GuiEvent {
         attempt: u32,
     },
     TransferReconnected {
+        transfer_id: String,
+    },
+    TransferPaused {
+        transfer_id: String,
+    },
+    TransferResuming {
         transfer_id: String,
     },
 }
@@ -175,6 +185,7 @@ impl TransferObserver for GuiTransferObserver {
         let _ = self.tx.send(GuiEvent::TransferStarted {
             transfer_id: transfer_id.to_string(),
             is_sender: self.is_sender,
+            is_paused: Arc::new(AtomicBool::new(false)),
             job_name: job_name.to_string(),
             total_bytes,
             bytes_done,
@@ -199,10 +210,10 @@ impl TransferObserver for GuiTransferObserver {
         });
     }
 
-    fn on_transfer_failed(&self, transfer_id: Uuid, error: &str) {
+    fn on_transfer_failed(&self, transfer_id: Uuid, error: &TransferError) {
         let _ = self.tx.send(GuiEvent::TransferFailed {
             transfer_id: transfer_id.to_string(),
-            error: error.to_string(),
+            error: error.clone(),
         });
     }
 

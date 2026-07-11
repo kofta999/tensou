@@ -189,6 +189,46 @@ impl From<&crate::config::Config> for SenderInfo {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TransferError {
+    Cancelled,
+    Rejected,
+    ConnectionLoss,
+    Other(String),
+}
+
+impl TransferError {
+    pub fn to_code(&self) -> u32 {
+        match self {
+            Self::Cancelled => 1,
+            Self::ConnectionLoss => 2,
+            Self::Rejected => 3,
+            Self::Other(_) => 4,
+        }
+    }
+
+    pub fn from_code(code: u32) -> Option<Self> {
+        match code {
+            1 => Some(Self::Cancelled),
+            2 => Some(Self::ConnectionLoss),
+            3 => Some(Self::Rejected),
+            4 => Some(Self::Other("Transfer failed".to_string())),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TransferError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => write!(f, "Cancelled"),
+            Self::Rejected => write!(f, "Rejected"),
+            Self::ConnectionLoss => write!(f, "Connection Loss"),
+            Self::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
 pub trait TransferObserver: Send + Sync {
     fn on_transfer_started(
         &self,
@@ -202,7 +242,7 @@ pub trait TransferObserver: Send + Sync {
     }
     fn on_chunk_transferred(&self, _transfer_id: Uuid, _bytes: u64) {}
     fn on_transfer_complete(&self, _transfer_id: Uuid) {}
-    fn on_transfer_failed(&self, _transfer_id: Uuid, _error: &str) {}
+    fn on_transfer_failed(&self, _transfer_id: Uuid, _error: &TransferError) {}
     /// Called when a text/clipboard sharing event is received and accepted.
     fn on_text_received(&self, _peer: SocketAddr, _job_name: String, _content: String) {}
     fn on_reconnecting(&self, _transfer_uuid: Uuid, _attempt: u32) {}

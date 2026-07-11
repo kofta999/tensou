@@ -3,7 +3,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
 };
 use tensou_core::{config::Config, net::SendType, util};
 use tensou_core::{
@@ -155,10 +155,13 @@ pub async fn run(paths: Vec<PathBuf>, ip: Option<IpAddr>, port: u16) -> anyhow::
 
     let transfer_handle = tokio::spawn(async move {
         client
-            .process_chunks(Arc::new(CliSendTransfer {
-                pb,
-                job_name: display_name.clone(),
-            }))
+            .process_chunks(
+                Arc::new(CliSendTransfer {
+                    pb,
+                    job_name: display_name.clone(),
+                }),
+                Arc::new(AtomicBool::new(false)),
+            )
             .await
     });
 

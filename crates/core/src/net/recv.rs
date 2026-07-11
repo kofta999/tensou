@@ -1,3 +1,4 @@
+use super::Sender;
 use crate::{
     CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE, QUIC_ESTABLISH_CONN_TIMEOUT_SECS,
     QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW, REQUEST_READ_TIMEOUT_SECS,
@@ -5,8 +6,8 @@ use crate::{
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
     protocol::{
-        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferObserver, TransferPayload,
-        TransferRequest,
+        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferError, TransferObserver,
+        TransferPayload, TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -104,7 +105,12 @@ impl ReceiverDaemon {
         };
         let observer_clone = observer.clone();
         let consent_clone = consent.clone();
-        let conn_cancel_token = parent_cancel_token.child_token();
+        // user_cancel_token: given to the GUI/observer — only cancelled by the user explicitly.
+        let user_cancel_token = parent_cancel_token.child_token();
+        // work_cancel_token: child of user_cancel_token, passed into disk writers.
+        // Internal failures (hash mismatch etc.) cancel this without affecting user_cancel_token,
+        // so the outer select! can't be fooled into thinking the user cancelled.
+        let work_cancel_token = user_cancel_token.child_token();
         let config_clone = self.config.clone();
 
         while let Some(res) = active_transfers.try_join_next() {
@@ -180,7 +186,7 @@ impl ReceiverDaemon {
                                 &target_dir_clone,
                                 observer_clone.clone(),
                                 transfer_id,
-                                conn_cancel_token.clone(),
+                                work_cancel_token.clone(),
                                 overwrite,
                             )
                             .await
@@ -192,39 +198,38 @@ impl ReceiverDaemon {
                                     receiver.total_full_size,
                                     receiver.total_full_size.saturating_sub(receiver.total_size),
                                     &receiver.job_name,
-                                    conn_cancel_token.clone(),
+                                    user_cancel_token.clone(),
                                 );
 
                                 tokio::select! {
-                                    _ = conn_cancel_token.cancelled() =>  {
-                                        connection.close(0u32.into(), b"Cancelled by receiver");
-                                        observer_clone.on_transfer_failed(transfer_id, "Cancelled locally");
+                                    _ = user_cancel_token.cancelled() => {
+                                        connection.close(TransferError::Cancelled.to_code().into(), b"");
+                                        observer_clone.on_transfer_failed(transfer_id, &TransferError::Cancelled);
                                     }
 
-                                    err = connection.closed() => {
-                                        if let quinn::ConnectionError::ApplicationClosed(app_close) = &err {
-                                            let reason = String::from_utf8_lossy(&app_close.reason);
-                                            observer_clone.on_transfer_failed(transfer_id, &reason);
-                                        } else {
-                                            observer_clone.on_transfer_failed(transfer_id, &err.to_string());
-                                        }
-                                    }
-
-                                    res = receiver.process_chunks(conn_cancel_token.clone()) => {
+                                    res = receiver.process_chunks(work_cancel_token.clone()) => {
                                         match res {
                                             Ok(_) => {
                                                 observer_clone.on_transfer_complete(transfer_id);
+                                                consented_transfers.lock().unwrap().remove(&transfer_id);
                                             }
                                             Err(e) => {
                                                 log::error!("Transfer chunk processing error: {e}");
-                                                observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                                let classification = if Sender::is_connection_error(&e) {
+                                                    let close_err = connection.closed().await;
+                                                    if let quinn::ConnectionError::ApplicationClosed(app_close) = close_err {
+                                                        let code = u64::from(app_close.error_code) as u32;
+                                                        TransferError::from_code(code).unwrap_or(TransferError::ConnectionLoss)
+                                                    } else {
+                                                        TransferError::ConnectionLoss
+                                                    }
+                                                } else {
+                                                    TransferError::Other(e.to_string())
+                                                };
+                                                observer_clone.on_transfer_failed(transfer_id, &classification);
                                             }
                                         }
                                     }
-                                }
-
-                                {
-                                    consented_transfers.lock().unwrap().remove(&transfer_id);
                                 }
                             }
                             Ok(AcceptResult::Text) => {
@@ -236,7 +241,21 @@ impl ReceiverDaemon {
                                 }
                             }
                             Err(e) => {
-                                observer_clone.on_transfer_failed(transfer_id, &e.to_string());
+                                let classification = if Sender::is_connection_error(&e) {
+                                    let close_err = connection.closed().await;
+                                    if let quinn::ConnectionError::ApplicationClosed(app_close) =
+                                        close_err
+                                    {
+                                        let code = u64::from(app_close.error_code) as u32;
+                                        TransferError::from_code(code)
+                                            .unwrap_or(TransferError::ConnectionLoss)
+                                    } else {
+                                        TransferError::ConnectionLoss
+                                    }
+                                } else {
+                                    TransferError::Other(e.to_string())
+                                };
+                                observer_clone.on_transfer_failed(transfer_id, &classification);
 
                                 {
                                     consented_transfers.lock().unwrap().remove(&transfer_id);
@@ -421,7 +440,7 @@ impl PendingTransfer {
         self.send_stream.write_u8(0).await?;
         self.send_stream.finish()?;
         self.connection
-            .close(0u32.into(), b"Transfer rejected by user");
+            .close(TransferError::Rejected.to_code().into(), b"");
         Ok(())
     }
 }
@@ -479,7 +498,7 @@ impl Receiver {
             });
         }
 
-        let mut has_error = false;
+        let mut first_error: Option<anyhow::Error> = None;
 
         // Handle Network errors
         while let Some(res) = join_set.join_next().await {
@@ -488,13 +507,17 @@ impl Receiver {
                 Ok(Err(e)) => {
                     if !cancel_token.is_cancelled() {
                         log::error!("Chunk error: {e:?}");
-                        has_error = true;
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
                     }
                 }
                 Err(e) => {
                     if !cancel_token.is_cancelled() {
                         log::error!("Task panic: {e:?}");
-                        has_error = true;
+                        if first_error.is_none() {
+                            first_error = Some(anyhow::anyhow!("chunk task panicked: {e}"));
+                        }
                     }
                 }
             }
@@ -516,20 +539,28 @@ impl Receiver {
                 Ok(Err(e)) => {
                     if !cancel_token.is_cancelled() {
                         log::error!("Writer failed: {e:?}");
-                        has_error = true;
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
                     }
                 }
                 Err(e) => {
                     if !cancel_token.is_cancelled() {
                         log::error!("Writer task panicked: {e:?}");
-                        has_error = true;
+                        if first_error.is_none() {
+                            first_error = Some(anyhow::anyhow!("writer task panicked: {e}"));
+                        }
                     }
                 }
             }
         }
 
-        if has_error || cancel_token.is_cancelled() {
-            anyhow::bail!("Transfer failed or was cancelled");
+        if cancel_token.is_cancelled() {
+            anyhow::bail!("Transfer cancelled");
+        }
+
+        if let Some(e) = first_error {
+            return Err(e);
         }
 
         tokio::task::spawn_blocking(move || {
@@ -537,7 +568,7 @@ impl Receiver {
         })
         .await?;
 
-        self.connection.close(0u32.into(), b"Transfer Complete");
+        self.connection.close(0u32.into(), b"");
 
         anyhow::Ok(())
     }

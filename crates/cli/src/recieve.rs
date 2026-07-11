@@ -10,7 +10,7 @@ use std::{
 use tensou_core::{
     config::Config,
     net::ReceiverDaemon,
-    protocol::{SenderInfo, TransferConsentHandler, TransferObserver},
+    protocol::{SenderInfo, TransferConsentHandler, TransferError, TransferObserver},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -57,7 +57,7 @@ impl TransferObserver for CliReceiveTransfer {
         }
     }
 
-    fn on_transfer_failed(&self, transfer_id: Uuid, error: &str) {
+    fn on_transfer_failed(&self, transfer_id: Uuid, error: &TransferError) {
         if let Some(pb) = self.active.lock().unwrap().remove(&transfer_id) {
             pb.finish_with_message(format!("Failed: {}", error));
         }
