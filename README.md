@@ -75,16 +75,11 @@ sequenceDiagram
 
 ## Screenshots
 
-<div align="center">
-  <h3>Active Transfers</h3>
-  <img src="assets/screenshots/transfers.png" alt="Active Transfers" width="600" />
-  <br /><br />
-  <h3>Settings Panel</h3>
-  <img src="assets/screenshots/settings.png" alt="Settings Panel" width="600" />
-  <br /><br />
-  <h3>Send View</h3>
-  <img src="assets/screenshots/send.png" alt="Send View" width="600" />
-</div>
+<p align="center">
+  <img src="assets/screenshots/transfers.png" alt="Active Transfers" width="32%" />
+  <img src="assets/screenshots/settings.png" alt="Settings Panel" width="32%" />
+  <img src="assets/screenshots/send.png" alt="Send View" width="32%" />
+</p>
 
 ---
 
