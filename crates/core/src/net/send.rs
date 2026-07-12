@@ -344,8 +344,9 @@ impl Sender {
             | quinn::ConnectionError::LocallyClosed
             | quinn::ConnectionError::ConnectionClosed(_) => true,
             quinn::ConnectionError::ApplicationClosed(app_close) => {
-                let reason = String::from_utf8_lossy(&app_close.reason);
-                !reason.contains("Cancelled") && !reason.contains("rejected")
+                let code = u64::from(app_close.error_code) as u32;
+                let error = TransferError::from_code(code).unwrap_or(TransferError::ConnectionLoss);
+                !matches!(error, TransferError::Cancelled | TransferError::Rejected)
             }
             _ => false,
         }
