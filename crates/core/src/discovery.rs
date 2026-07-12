@@ -25,7 +25,7 @@ pub fn register_service(config: &Config) -> anyhow::Result<ServiceDaemon> {
     let daemon = ServiceDaemon::new()?;
     let hostname = config.display_name.clone();
     let instance_name = config.display_name.clone();
-    let hostname_fqdn = format!("{}.local.", &hostname.to_lowercase());
+    let hostname_fqdn = format!("{}.local.", hostname.to_lowercase());
 
     let mut props = HashMap::new();
 
