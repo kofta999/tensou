@@ -179,7 +179,10 @@ impl Sender {
                     return Err(e);
                 }
                 Err(e) if is_connection_error(&e) => {
-                    log::warn!("Sender: connection error encountered: {:?}. Attempting reconnect...", e);
+                    log::warn!(
+                        "Sender: connection error encountered: {:?}. Attempting reconnect...",
+                        e
+                    );
                     self.reconnect_and_resync(&observer).await?;
                 }
                 Err(e) => {
@@ -202,7 +205,10 @@ impl Sender {
         observer: &Arc<dyn TransferObserver>,
     ) -> anyhow::Result<()> {
         // Tell receiver how many chunks to expect in this batch
-        log::info!("Sender: opening uni stream to send chunk count ({})", tasks.len());
+        log::info!(
+            "Sender: opening uni stream to send chunk count ({})",
+            tasks.len()
+        );
         let mut header = self.connection_manager.open_uni().await?;
         header.write_all(&rmp_serde::to_vec(&tasks.len())?).await?;
         header.finish()?;

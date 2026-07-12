@@ -201,12 +201,11 @@ impl DiskWriter {
             );
         }
 
-        if let Ok(f) = fs::File::open(&final_path) {
-            if let Err(e) =
+        if let Ok(f) = fs::File::open(&final_path)
+            && let Err(e) =
                 f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(self.metadata.modified))
-            {
-                log::warn!("Failed to set mtime for {:?}: {}", final_path, e);
-            }
+        {
+            log::warn!("Failed to set mtime for {:?}: {}", final_path, e);
         }
 
         Ok(())
