@@ -443,7 +443,7 @@ fn send_file_background(
     paths: Vec<PathBuf>,
     preset_id: Option<Uuid>,
 ) {
-    let transfer_id = preset_id.unwrap_or_else(|| Uuid::new_v4());
+    let transfer_id = preset_id.unwrap_or_else(Uuid::new_v4);
     let tx_clone = event_tx.clone();
 
     tokio::spawn(async move {

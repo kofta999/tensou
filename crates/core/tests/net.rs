@@ -104,7 +104,7 @@ async fn test_full_network_transfer() -> anyhow::Result<()> {
 
     let mut client = Sender::connect(
         addr,
-        SendType::Files(&[source_path.clone()]),
+        SendType::Files(std::slice::from_ref(&source_path)),
         make_sender_info(),
         CancellationToken::new(),
         Uuid::new_v4(),
@@ -156,7 +156,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
 
     let mut client_1 = Sender::connect(
         addr,
-        SendType::Files(&[source_path_1.clone()]),
+        SendType::Files(std::slice::from_ref(&source_path_1)),
         make_sender_info(),
         CancellationToken::new(),
         Uuid::new_v4(),
@@ -170,7 +170,7 @@ async fn test_unique_naming_transfer() -> anyhow::Result<()> {
 
     let mut client_2 = Sender::connect(
         addr,
-        SendType::Files(&[source_path_2_named_same.clone()]),
+        SendType::Files(std::slice::from_ref(&source_path_2_named_same)),
         make_sender_info(),
         CancellationToken::new(),
         Uuid::new_v4(),
@@ -252,7 +252,7 @@ async fn test_directory_transfer() -> anyhow::Result<()> {
 
     let mut client = Sender::connect(
         addr,
-        SendType::Files(&[job_dir.clone()]),
+        SendType::Files(std::slice::from_ref(&job_dir)),
         make_sender_info(),
         CancellationToken::new(),
         Uuid::new_v4(),
@@ -419,7 +419,7 @@ async fn test_many_small_files_performance() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let mut client = Sender::connect(
         addr,
-        SendType::Files(&[source_folder.clone()]),
+        SendType::Files(std::slice::from_ref(&source_folder)),
         make_sender_info(),
         CancellationToken::new(),
         Uuid::new_v4(),
@@ -486,7 +486,7 @@ async fn test_reconnect_resumes_after_connection_drop() -> anyhow::Result<()> {
 
     let mut client = Sender::connect(
         addr,
-        SendType::Files(&[source_path.clone()]),
+        SendType::Files(std::slice::from_ref(&source_path)),
         make_sender_info(),
         CancellationToken::new(),
         Uuid::new_v4(),
@@ -502,12 +502,10 @@ async fn test_reconnect_resumes_after_connection_drop() -> anyhow::Result<()> {
     impl TransferObserver for ReconnectTestObserver {
         fn on_chunk_transferred(&self, _id: Uuid, _bytes: u64) {
             let mut dropped = self.dropped.lock().unwrap();
-            if !*dropped {
-                if let Some(conn) = self.conn.lock().unwrap().take() {
-                    log::warn!("TEST: Simulating connection drop by closing connection...");
-                    conn.close(0u32.into(), b"SimulatedNetworkDrop");
-                    *dropped = true;
-                }
+            if !*dropped && let Some(conn) = self.conn.lock().unwrap().take() {
+                log::warn!("TEST: Simulating connection drop by closing connection...");
+                conn.close(0u32.into(), b"SimulatedNetworkDrop");
+                *dropped = true;
             }
         }
     }

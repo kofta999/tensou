@@ -2,7 +2,9 @@ use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE,
     disk::SendSession,
     net::connection_manager::ConnectionManager,
-    protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
+    protocol::{
+        self, SenderInfo, State, TransferError, TransferObserver, TransferPayload, TransferRequest,
+    },
 };
 use std::{
     collections::HashMap,
@@ -172,7 +174,6 @@ impl Sender {
                     self.reconnect_and_resync(&observer).await?;
                 }
                 Err(e) => {
-                    println!("TEST_DEBUG_ERROR: {:?}", e);
                     return Err(e);
                 }
             }
@@ -312,26 +313,24 @@ impl Sender {
 
     pub fn is_connection_error(e: &anyhow::Error) -> bool {
         for cause in e.chain() {
-            if let Some(we) = cause.downcast_ref::<quinn::WriteError>() {
-                if let quinn::WriteError::ConnectionLost(ce) = we {
-                    if Self::is_quinn_connection_error(ce) {
-                        return true;
-                    }
-                }
+            if let Some(we) = cause.downcast_ref::<quinn::WriteError>()
+                && let quinn::WriteError::ConnectionLost(ce) = we
+                && Self::is_quinn_connection_error(ce)
+            {
+                return true;
             }
-            if let Some(ce) = cause.downcast_ref::<quinn::ConnectionError>() {
-                if Self::is_quinn_connection_error(ce) {
-                    return true;
-                }
+            if let Some(ce) = cause.downcast_ref::<quinn::ConnectionError>()
+                && Self::is_quinn_connection_error(ce)
+            {
+                return true;
             }
-            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
-                if io_err.kind() == std::io::ErrorKind::ConnectionReset
+            if let Some(io_err) = cause.downcast_ref::<std::io::Error>()
+                && (io_err.kind() == std::io::ErrorKind::ConnectionReset
                     || io_err.kind() == std::io::ErrorKind::ConnectionAborted
                     || io_err.kind() == std::io::ErrorKind::NotConnected
-                    || io_err.kind() == std::io::ErrorKind::BrokenPipe
-                {
-                    return true;
-                }
+                    || io_err.kind() == std::io::ErrorKind::BrokenPipe)
+            {
+                return true;
             }
         }
         false

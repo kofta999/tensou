@@ -26,12 +26,11 @@ impl TransferStaging {
 
     fn get_staging_relative_path(&self, relative_path: &str) -> PathBuf {
         let path = Path::new(relative_path);
-        if self.top_level_prefix.is_some() {
-            if let Some(first_component) = path.components().next() {
-                if let Ok(stripped) = path.strip_prefix(first_component) {
-                    return stripped.to_path_buf();
-                }
-            }
+        if self.top_level_prefix.is_some()
+            && let Some(first_component) = path.components().next()
+            && let Ok(stripped) = path.strip_prefix(first_component)
+        {
+            return stripped.to_path_buf();
         }
         path.to_path_buf()
     }

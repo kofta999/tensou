@@ -146,7 +146,7 @@ pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc
         }
     }
 
-    let job_name = generate_job_name(&paths);
+    let job_name = generate_job_name(paths);
 
     Ok((
         Manifest {
