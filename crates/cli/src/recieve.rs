@@ -10,7 +10,7 @@ use std::{
 use tensou_core::{
     config::Config,
     net::ReceiverDaemon,
-    protocol::{SenderInfo, TransferConsentHandler, TransferError, TransferObserver},
+    protocol::{SenderInfo, TransferConsentHandler, TransferError, TransferMode, TransferObserver},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -91,7 +91,11 @@ impl TransferConsentHandler for CliConsent {
     }
 }
 
-pub async fn run(port: u16, output_path: Option<PathBuf>) -> anyhow::Result<()> {
+pub async fn run(
+    port: u16,
+    output_path: Option<PathBuf>,
+    mode: Option<TransferMode>,
+) -> anyhow::Result<()> {
     let cancel_token = CancellationToken::new();
     let cancel_clone = cancel_token.clone();
 
@@ -111,6 +115,10 @@ pub async fn run(port: u16, output_path: Option<PathBuf>) -> anyhow::Result<()> 
     if let Some(path) = output_path {
         std::fs::create_dir_all(&path)?;
         config.target_dir = path.canonicalize()?;
+    }
+
+    if let Some(m) = mode {
+        config.transfer_mode = m;
     }
 
     let daemon = ReceiverDaemon::new(bind_addr, Arc::new(Mutex::new(config)))?;

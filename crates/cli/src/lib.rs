@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{net::IpAddr, path::PathBuf};
-use tensou_core::SERVER_PORT;
+use tensou_core::{SERVER_PORT, protocol::TransferMode};
 
 mod recieve;
 mod send;
@@ -39,6 +39,10 @@ pub enum Commands {
         /// Optional: Override the default save location
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Optional: Mode to handle file conflicts (unique, overwrite, sync)
+        #[arg(long, value_parser = ["unique", "overwrite", "sync"])]
+        mode: Option<String>,
     },
 }
 
@@ -47,7 +51,15 @@ pub async fn run() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Commands::Send { paths, ip, port }) => send::run(paths, ip, port).await,
-        Some(Commands::Receive { port, output }) => recieve::run(port, output).await,
+        Some(Commands::Receive { port, output, mode }) => {
+            let transfer_mode = mode.map(|s| match s.as_str() {
+                "unique" => TransferMode::Unique,
+                "overwrite" => TransferMode::Overwrite,
+                "sync" => TransferMode::Sync,
+                _ => unreachable!(),
+            });
+            recieve::run(port, output, transfer_mode).await
+        }
         None => tensou_gui::run(),
     }
 }
