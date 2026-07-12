@@ -85,6 +85,10 @@ sequenceDiagram
 
 ## Installation
 
+### Pre-built Binaries (Recommended)
+
+You can download pre-built installers and standalone binaries for Linux (AppImage) and Windows (NSIS installer or standalone executable) directly from the [Releases](https://github.com/kofta999/tensou/releases) page.
+
 ### From Source
 
 Ensure you have Rust and Cargo installed (Rust 1.75 or later is required).
