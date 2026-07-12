@@ -45,14 +45,14 @@ export component SendView inherits FocusScope {
                     }
 
                     // Pulsing dot indicator
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        background: AppData.devices.length == 0 ? Theme.secondary : Theme.success;
-                        border-radius: 4px;
-                        y: (parent.height - self.height) / 2;
-                        opacity: 0.5 + 0.5 * Math.sin(animation-tick() / 300ms * 1rad);
-                    }
+                    // Rectangle {
+                    //     width: 8px;
+                    //     height: 8px;
+                    //     background: AppData.devices.length == 0 ? Theme.secondary : Theme.success;
+                    //     border-radius: 4px;
+                    //     y: (parent.height - self.height) / 2;
+                    //     opacity: 0.5 + 0.5 * Math.sin(animation-tick() / 300ms * 1rad);
+                    // }
                 }
 
                 Text {
