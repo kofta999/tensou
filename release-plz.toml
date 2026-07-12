@@ -6,7 +6,19 @@ git_release_enable = false
 [[package]]
 name = "tensou"
 git_tag_enable = true
-git_tag_name = "v{{ version }}"
+git_tag_name = "tensou-v{{ version }}"
 git_release_enable = true
-git_release_name = "v{{ version }}"
+git_release_name = "tensou-v{{ version }}"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "tensou-core"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "tensou-cli"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "tensou-gui"
 changelog_path = "CHANGELOG.md"
