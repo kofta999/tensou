@@ -71,6 +71,7 @@ mod tests {
             relative_path: "".into(),
             size: 12,
             chunk_size: 4,
+            modified: 0,
         };
         assert_eq!(m.get_chunk_size(0), 4);
         assert_eq!(m.get_chunk_size(1), 4);
@@ -85,6 +86,7 @@ mod tests {
             relative_path: "".into(),
             size: 10,
             chunk_size: 4,
+            modified: 0,
         };
         assert_eq!(m.get_chunk_size(0), 4);
         assert_eq!(m.get_chunk_size(1), 4);
@@ -99,6 +101,7 @@ mod tests {
             relative_path: "".into(),
             size: 100,
             chunk_size: 4 * 1024 * 1024,
+            modified: 0,
         };
         assert_eq!(m.get_chunk_size(0), 100);
     }
@@ -112,6 +115,7 @@ mod tests {
             relative_path: "sub/file.txt".into(),
             size: 8,
             chunk_size: 4,
+            modified: 0,
         };
         let ins = JobInstruction::new(m);
 
@@ -130,6 +134,7 @@ mod tests {
             relative_path: "".into(),
             size: 8,
             chunk_size: 4,
+            modified: 0,
         };
         let mut ins = JobInstruction::new(m);
 
@@ -157,6 +162,7 @@ mod tests {
             relative_path: "".into(),
             size: 16,
             chunk_size: 4,
+            modified: 0,
         }; // Requires 4 chunks
 
         // Test 1: Empty state file (0 bytes)
@@ -191,6 +197,7 @@ mod tests {
             relative_path: "".into(),
             size: 8,
             chunk_size: 4,
+            modified: 0,
         };
         let mut ins = JobInstruction::new(m);
         ins.load_state_from_disk(
@@ -213,6 +220,7 @@ mod tests {
             relative_path: "already_done.txt".into(),
             size: 12,
             chunk_size: 4,
+            modified: 0,
         };
         let mut ins = JobInstruction::new(m);
 
@@ -238,6 +246,7 @@ mod tests {
             relative_path: "already_done.txt".into(),
             size: 12,
             chunk_size: 4,
+            modified: 0,
         };
         let mut ins = JobInstruction::new(m);
 
@@ -309,10 +318,11 @@ mod tests {
                 relative_path: "../escape.txt".into(),
                 size: 4,
                 chunk_size: 4,
+                modified: 0,
             }],
         };
 
-        let result = manifest::parse(manifest, staging_dir.path(), false);
+        let result = manifest::parse(manifest, staging_dir.path(), TransferMode::Unique);
         assert!(result.is_err(), "Path traversal should be rejected");
     }
 
@@ -340,18 +350,20 @@ mod tests {
                     relative_path: "a.txt".into(),
                     size: 5,
                     chunk_size: 4,
+                    modified: 0,
                 },
                 Metadata {
                     file_id: 1,
                     relative_path: "MyPhotos/pic1.jpg".into(),
                     size: 5,
                     chunk_size: 4,
+                    modified: 0,
                 },
             ],
         };
 
         let (instructions, _staging) =
-            manifest::parse(manifest, downloads_dir.path(), false).unwrap();
+            manifest::parse(manifest, downloads_dir.path(), TransferMode::Unique).unwrap();
         assert_eq!(instructions.len(), 2);
 
         // Check that paths are correctly updated to unique names

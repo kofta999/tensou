@@ -2,10 +2,14 @@ use crate::{
     disk::TransferStaging,
     protocol::{
         ChunkHeader, ChunkPacket, ChunkPacketReceiver, ChunkPacketSender, JobInstruction, Metadata,
-        State, TransferError, TransferObserver,
+        State, TransferObserver,
     },
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
+};
 use tokio::{
     fs::File,
     io::{AsyncSeekExt, AsyncWriteExt},
@@ -70,11 +74,8 @@ impl DiskWriter {
 
                             // Cancel transfer on chunk hash failure (rare to happen, user can resume later)
                             if !self.write_chunk(packet).await? {
-                                 self.observer.on_transfer_failed(
-                                    self.transfer_id,
-                                    &TransferError::Other("Chunk integrity check failed — retry the transfer".to_string()),
-                                 );
                                 self.cancel_token.cancel();
+                                anyhow::bail!("Chunk integrity check failed — retry the transfer");
                             } else {
                                 chunks_since_save += 1;
 
@@ -181,13 +182,31 @@ impl DiskWriter {
         }
 
         let is_small = self.metadata.size <= self.metadata.chunk_size;
+        let final_path = self.staging.final_path(&self.metadata.relative_path);
         if !is_small {
             self.staging
                 .create_file_destination_dir(&self.metadata.relative_path)?;
 
             let part_path = self.staging.part_path(&self.metadata.relative_path);
-            let final_path = self.staging.final_path(&self.metadata.relative_path);
-            std::fs::rename(part_path, final_path)?;
+            log::debug!(
+                "Renaming completed file from {:?} to {:?}",
+                part_path,
+                final_path
+            );
+            std::fs::rename(part_path, &final_path)?;
+        } else {
+            log::debug!(
+                "File {:?} is small, already written to final path",
+                final_path
+            );
+        }
+
+        if let Ok(f) = fs::File::open(&final_path) {
+            if let Err(e) =
+                f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(self.metadata.modified))
+            {
+                log::warn!("Failed to set mtime for {:?}: {}", final_path, e);
+            }
         }
 
         Ok(())

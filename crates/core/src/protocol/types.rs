@@ -31,6 +31,17 @@ impl TransferPayload {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TransferMode {
+    /// Create uniquely-named copies (e.g. "file (1).txt"). Never overwrites.
+    #[default]
+    Unique,
+    /// Overwrite existing files with the same name. Always re-transfers everything.
+    Overwrite,
+    /// Skip files whose size and mtime match. Overwrite files that differ.
+    Sync,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Manifest {
     /// Purely cosmetic name for UI/Notifications (e.g. "Cargo.lock" or "export.zip and 4 other items")
@@ -64,6 +75,8 @@ pub struct Metadata {
     pub relative_path: String,
     pub size: u64,
     pub chunk_size: u64,
+    /// Unix timestamp (seconds since epoch)
+    pub modified: u64,
 }
 
 impl Metadata {

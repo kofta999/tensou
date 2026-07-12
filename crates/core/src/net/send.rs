@@ -1,10 +1,8 @@
 use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE,
     disk::SendSession,
-    net::connection_manager::ConnectionManager,
-    protocol::{
-        self, SenderInfo, State, TransferError, TransferObserver, TransferPayload, TransferRequest,
-    },
+    net::{connection_manager::ConnectionManager, is_connection_error},
+    protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
 };
 use std::{
     collections::HashMap,
@@ -152,34 +150,48 @@ impl Sender {
         observer: Arc<dyn TransferObserver>,
         is_paused: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
+        log::info!("Sender: starting process_chunks loop");
         loop {
             // Re-dervied from remote_states bitvec on reconnection
             let task_list = self.flatten();
-            if task_list.is_empty() {
-                break;
+            log::info!(
+                "Sender: flatten() returned {} chunks to transfer",
+                task_list.len()
+            );
+            if log::log_enabled!(log::Level::Debug) {
+                log::debug!("Sender: remaining task chunks: {:?}", task_list);
             }
 
             match self.stream_chunks(task_list, &observer).await {
-                Ok(()) => break,
+                Ok(()) => {
+                    log::info!("Sender: stream_chunks completed successfully, breaking loop");
+                    break;
+                }
                 Err(e) if self.cancel_token.is_cancelled() => {
                     let err = if is_paused.load(std::sync::atomic::Ordering::Relaxed) {
+                        log::info!("Sender: transfer paused (connection loss)");
                         protocol::TransferError::ConnectionLoss
                     } else {
+                        log::info!("Sender: transfer cancelled");
                         protocol::TransferError::Cancelled
                     };
                     self.close_with_error(&err);
                     return Err(e);
                 }
-                Err(e) if Self::is_connection_error(&e) => {
+                Err(e) if is_connection_error(&e) => {
+                    log::warn!("Sender: connection error encountered: {:?}. Attempting reconnect...", e);
                     self.reconnect_and_resync(&observer).await?;
                 }
                 Err(e) => {
+                    log::error!("Sender: fatal error in stream_chunks: {:?}", e);
                     return Err(e);
                 }
             }
         }
 
+        log::info!("Sender: closing connection gracefully");
         self.connection_manager.close_gracefully().await;
+        log::info!("Sender: process_chunks finished successfully");
         Ok(())
     }
 
@@ -190,9 +202,11 @@ impl Sender {
         observer: &Arc<dyn TransferObserver>,
     ) -> anyhow::Result<()> {
         // Tell receiver how many chunks to expect in this batch
+        log::info!("Sender: opening uni stream to send chunk count ({})", tasks.len());
         let mut header = self.connection_manager.open_uni().await?;
         header.write_all(&rmp_serde::to_vec(&tasks.len())?).await?;
         header.finish()?;
+        log::debug!("Sender: chunk count header sent successfully");
 
         let mut tasks = tasks.into_iter();
         let mut in_flight = JoinSet::new();
@@ -309,46 +323,5 @@ impl Sender {
         }
 
         arr
-    }
-
-    pub fn is_connection_error(e: &anyhow::Error) -> bool {
-        for cause in e.chain() {
-            if let Some(we) = cause.downcast_ref::<quinn::WriteError>()
-                && let quinn::WriteError::ConnectionLost(ce) = we
-                && Self::is_quinn_connection_error(ce)
-            {
-                return true;
-            }
-            if let Some(ce) = cause.downcast_ref::<quinn::ConnectionError>()
-                && Self::is_quinn_connection_error(ce)
-            {
-                return true;
-            }
-            if let Some(io_err) = cause.downcast_ref::<std::io::Error>()
-                && (io_err.kind() == std::io::ErrorKind::ConnectionReset
-                    || io_err.kind() == std::io::ErrorKind::ConnectionAborted
-                    || io_err.kind() == std::io::ErrorKind::NotConnected
-                    || io_err.kind() == std::io::ErrorKind::BrokenPipe)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn is_quinn_connection_error(e: &quinn::ConnectionError) -> bool {
-        match e {
-            quinn::ConnectionError::TimedOut
-            | quinn::ConnectionError::Reset
-            | quinn::ConnectionError::TransportError(_)
-            | quinn::ConnectionError::LocallyClosed
-            | quinn::ConnectionError::ConnectionClosed(_) => true,
-            quinn::ConnectionError::ApplicationClosed(app_close) => {
-                let code = u64::from(app_close.error_code) as u32;
-                let error = TransferError::from_code(code).unwrap_or(TransferError::ConnectionLoss);
-                !matches!(error, TransferError::Cancelled | TransferError::Rejected)
-            }
-            _ => false,
-        }
     }
 }

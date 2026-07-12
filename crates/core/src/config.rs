@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::SERVER_PORT;
+use crate::{SERVER_PORT, protocol::TransferMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -19,8 +19,8 @@ pub struct Config {
     /// Base target directory for receiving files.
     pub target_dir: PathBuf,
 
-    /// Should incoming files overwrite local files with the same name.
-    pub overwrite_dest: bool,
+    /// How to handle file conflicts on the receiver side.
+    pub transfer_mode: TransferMode,
 
     /// The port to bind for incoming QUIC connections (default: 6967).
     pub listen_port: u16,
@@ -36,14 +36,16 @@ impl Default for Config {
             .into_string()
             .unwrap_or_else(|_| "Unknown Device".to_string());
 
-        let target_dir = dirs::download_dir().unwrap_or_else(|| PathBuf::from(".").join("Tensou"));
+        let target_dir = dirs::download_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Tensou");
 
         Self {
             device_uuid: uuid::Uuid::new_v4().to_string(),
             display_name: hostname,
             os_type,
             target_dir,
-            overwrite_dest: false,
+            transfer_mode: TransferMode::Unique,
             listen_port: SERVER_PORT,
             auto_accept: false,
         }

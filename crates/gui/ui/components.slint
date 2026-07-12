@@ -444,3 +444,45 @@ export component ZenLineEdit inherits Rectangle {
         }
     }
 }
+
+export component SegmentedControl inherits Rectangle {
+    in property <[string]> options;
+    in-out property <int> selected_index: 0;
+    callback selected(int);
+
+    height: 36px;
+    background: Theme.surface;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.surface-hover;
+
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+
+        for option[index] in options : Rectangle {
+            background: root.selected_index == index ? Theme.surface-hover : transparent;
+            border-radius: 6px;
+            horizontal-stretch: 1;
+
+            animate background { duration: 150ms; }
+
+            Text {
+                text: option;
+                color: root.selected_index == index ? Theme.text-primary : Theme.text-secondary;
+                font-size: 13px;
+                font-weight: root.selected_index == index ? 700 : 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.selected_index = index;
+                    root.selected(index);
+                }
+            }
+        }
+    }
+}

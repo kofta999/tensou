@@ -58,7 +58,7 @@ export global AppData {
     in-out property <string> display_name: "";
     in property <string> os_type: "";
     in property <string> download_dir: "";
-    in-out property <bool> overwrite_dest: false;
+    in-out property <int> transfer_mode: 0;
     in property <int> listen_port: 6967;
     in-out property <bool> auto_accept: false;
 
@@ -92,7 +92,7 @@ export global Logic {
     callback consent_response(string, bool); // transfer_id, accepted
     callback direct_ip_changed(string);
     callback update_display_name(string);
-    callback toggle_overwrite_dest(bool);
+    callback set_transfer_mode(int);
     callback toggle_auto_accept(bool);
 }
 

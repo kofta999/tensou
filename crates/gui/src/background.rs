@@ -159,7 +159,6 @@ pub fn spawn_transfers(
                                     original_paths,
                                     peer_addr,
                                 });
-                                dbg!(transfers.len());
 
                                 show_toast(
                                     main_window_weak_transfers.clone(),
@@ -196,7 +195,6 @@ pub fn spawn_transfers(
                             error,
                         } => {
                             if let Some(pos) = transfers.iter().position(|x| x.id == transfer_id) {
-                                dbg!(&transfers[pos], &error);
                                 if error == TransferError::Cancelled {
                                     let mut failed_t = transfers.remove(pos);
                                     failed_t.status = TransferStatus::Cancelled;

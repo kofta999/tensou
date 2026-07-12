@@ -57,9 +57,14 @@ struct TestObserver;
 impl TransferObserver for TestObserver {}
 
 fn make_config(dest: &std::path::Path, overwrite: bool) -> Arc<Mutex<Config>> {
+    let mode = if overwrite {
+        tensou_core::protocol::TransferMode::Overwrite
+    } else {
+        tensou_core::protocol::TransferMode::Unique
+    };
     Arc::new(Mutex::new(Config {
         target_dir: dest.to_path_buf(),
-        overwrite_dest: overwrite,
+        transfer_mode: mode,
         ..Default::default()
     }))
 }

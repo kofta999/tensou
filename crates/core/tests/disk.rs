@@ -38,6 +38,7 @@ async fn test_full_local_transfer() -> anyhow::Result<()> {
         relative_path: "source.bin".to_string(),
         size: 10 * 1024 * 1024,
         chunk_size: CHUNK_SIZE as u64,
+        modified: 0,
     };
     let send_session = SendSession::new(metadata, &source_path)?;
 
@@ -98,6 +99,7 @@ async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
         relative_path: "big.bin".to_string(),
         size: file_size,
         chunk_size: CHUNK_SIZE as u64,
+        modified: 0,
     };
     let send_session = SendSession::new(metadata, &source_path)?;
 

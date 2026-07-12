@@ -35,7 +35,12 @@ pub fn run_gui(
         app_data.set_display_name(cfg.display_name.clone().into());
         app_data.set_os_type(cfg.os_type.clone().into());
         app_data.set_download_dir(cfg.target_dir.to_string_lossy().to_string().into());
-        app_data.set_overwrite_dest(cfg.overwrite_dest);
+        let mode_val = match cfg.transfer_mode {
+            tensou_core::protocol::TransferMode::Unique => 0,
+            tensou_core::protocol::TransferMode::Overwrite => 1,
+            tensou_core::protocol::TransferMode::Sync => 2,
+        };
+        app_data.set_transfer_mode(mode_val);
         app_data.set_auto_accept(cfg.auto_accept);
         app_data.set_listen_port(cfg.listen_port as i32);
     }

@@ -1,6 +1,6 @@
 use crate::disk::{SendSession, TransferStaging};
-use crate::protocol::Metadata;
 use crate::protocol::{JobInstruction, Manifest};
+use crate::protocol::{Metadata, TransferMode};
 use crate::util::{generate_job_name, is_safe_relative_path};
 use crate::{CHUNK_SIZE, FileId};
 use anyhow::bail;
@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 pub fn parse(
     manifest: Manifest,
     downloads_dir: &Path,
-    overwrite: bool,
+    transfer_mode: TransferMode,
 ) -> anyhow::Result<(Vec<JobInstruction>, Arc<TransferStaging>)> {
     use crate::STAGING_DIR_NAME;
     let mut instructions = Vec::new();
@@ -29,7 +29,7 @@ pub fn parse(
             folder_staging.exists() || file_state.exists()
         };
 
-        let unique_path = if overwrite || has_staging {
+        let unique_path = if transfer_mode != TransferMode::Unique || has_staging {
             original_path
         } else {
             crate::util::find_unique_path(&original_path)
@@ -87,19 +87,109 @@ pub fn parse(
             bail!("Invalid path")
         }
 
-        let mut instruction = JobInstruction::new(metadata);
-        let state_path = &staging.state_path(&instruction.metadata.relative_path);
-        let final_path = &staging.final_path(&instruction.metadata.relative_path);
-        instruction.load_state_from_disk(state_path, final_path, overwrite)?;
+        let final_path = &staging.final_path(&metadata.relative_path);
 
-        // If the file is already complete (size 0) and does not exist at final destination,
-        // create the parent folder structure and the empty file on the blocking thread.
-        if instruction.state.0.all() && (overwrite || !final_path.exists()) {
-            staging.create_file_destination_dir(&instruction.metadata.relative_path)?;
-            std::fs::File::create(final_path)?;
+        log::info!(
+            "Parsing file '{:?}' with transfer_mode {:?}",
+            metadata.relative_path,
+            transfer_mode
+        );
+
+        match transfer_mode {
+            TransferMode::Unique => {
+                let mut instruction = JobInstruction::new(metadata);
+                let state_path = &staging.state_path(&instruction.metadata.relative_path);
+                log::debug!("Unique mode: loading state from disk for {:?}", final_path);
+                instruction.load_state_from_disk(state_path, final_path, false)?;
+
+                // If the file is already complete (size 0) and does not exist at final destination,
+                // create the parent folder structure and the empty file on the blocking thread.
+                if instruction.state.0.all() && !final_path.exists() {
+                    log::info!(
+                        "Unique mode: creating empty file for 0-byte transfer at {:?}",
+                        final_path
+                    );
+                    staging.create_file_destination_dir(&instruction.metadata.relative_path)?;
+                    std::fs::File::create(final_path)?;
+                }
+
+                instructions.push(instruction);
+            }
+            TransferMode::Overwrite => {
+                let mut instruction = JobInstruction::new(metadata);
+                let state_path = &staging.state_path(&instruction.metadata.relative_path);
+                log::debug!(
+                    "Overwrite mode: loading state from disk (overwrite=true) for {:?}",
+                    final_path
+                );
+                instruction.load_state_from_disk(state_path, final_path, true)?;
+                if instruction.state.0.all() {
+                    log::info!(
+                        "Overwrite mode: creating empty file for 0-byte transfer at {:?}",
+                        final_path
+                    );
+                    staging.create_file_destination_dir(&instruction.metadata.relative_path)?;
+                    std::fs::File::create(final_path)?;
+                }
+                instructions.push(instruction);
+            }
+            TransferMode::Sync => {
+                // Sync: skip files with matching size + mtime
+                if let Ok(local_meta) = std::fs::metadata(final_path) {
+                    let local_mtime = local_meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+
+                    log::info!(
+                        "Sync comparison for {:?}: local_size={}, local_mtime={}; incoming_size={}, incoming_mtime={}",
+                        final_path,
+                        local_meta.len(),
+                        local_mtime,
+                        metadata.size,
+                        metadata.modified
+                    );
+
+                    if local_meta.len() == metadata.size && local_mtime == metadata.modified {
+                        log::info!(
+                            "Sync: File {:?} matches local file exactly. Skipping transfer.",
+                            final_path
+                        );
+                        let mut instruction = JobInstruction::new(metadata);
+                        instruction.state.0.fill(true);
+                        instruction.remaining_bytes = 0;
+                        instruction.is_resumed = true;
+                        instructions.push(instruction);
+                        continue;
+                    } else {
+                        log::info!(
+                            "Sync: File {:?} differs (size or mtime mismatch). Proceeding with transfer.",
+                            final_path
+                        );
+                    }
+                } else {
+                    log::info!(
+                        "Sync: File {:?} does not exist locally. Proceeding with transfer.",
+                        final_path
+                    );
+                }
+
+                let mut instruction = JobInstruction::new(metadata);
+                let state_path = &staging.state_path(&instruction.metadata.relative_path);
+                instruction.load_state_from_disk(state_path, final_path, true)?;
+                if instruction.state.0.all() {
+                    log::info!(
+                        "Sync mode: creating empty file for 0-byte transfer at {:?}",
+                        final_path
+                    );
+                    staging.create_file_destination_dir(&instruction.metadata.relative_path)?;
+                    std::fs::File::create(final_path)?;
+                }
+                instructions.push(instruction);
+            }
         }
-
-        instructions.push(instruction);
     }
 
     Ok((instructions, staging))
@@ -125,6 +215,7 @@ pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
         {
+            let fs_metadata = entry.metadata()?;
             let metadata = Metadata {
                 file_id: file_id_counter,
                 chunk_size: CHUNK_SIZE.into(),
@@ -133,7 +224,12 @@ pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc
                     .strip_prefix(parent)?
                     .to_string_lossy()
                     .into_owned(),
-                size: entry.metadata()?.len(),
+                size: fs_metadata.len(),
+                modified: fs_metadata
+                    .modified()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
             };
 
             sessions.insert(

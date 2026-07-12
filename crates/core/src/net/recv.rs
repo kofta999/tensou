@@ -1,13 +1,13 @@
-use super::Sender;
 use crate::{
     CHUNK_SIZE, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE, QUIC_ESTABLISH_CONN_TIMEOUT_SECS,
     QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW, REQUEST_READ_TIMEOUT_SECS,
     config::Config,
     discovery,
     disk::{IgnitionPayload, ReceiveSession, TransferStaging},
+    net::is_connection_error,
     protocol::{
-        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferError, TransferObserver,
-        TransferPayload, TransferRequest,
+        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferError, TransferMode,
+        TransferObserver, TransferPayload, TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -171,9 +171,9 @@ impl ReceiverDaemon {
                     };
 
                     if is_accepted {
-                        let overwrite = {
+                        let mode = {
                             let config = config_clone.lock().unwrap();
-                            config.overwrite_dest
+                            config.transfer_mode
                         };
                         let transfer_id = pending.request.transfer_id;
 
@@ -187,7 +187,7 @@ impl ReceiverDaemon {
                                 observer_clone.clone(),
                                 transfer_id,
                                 work_cancel_token.clone(),
-                                overwrite,
+                                mode,
                             )
                             .await
                         {
@@ -215,16 +215,27 @@ impl ReceiverDaemon {
                                             }
                                             Err(e) => {
                                                 log::error!("Transfer chunk processing error: {e}");
-                                                let classification = if Sender::is_connection_error(&e) {
-                                                    let close_err = connection.closed().await;
-                                                    if let quinn::ConnectionError::ApplicationClosed(app_close) = close_err {
+                                                let classification = match tokio::time::timeout(
+                                                    std::time::Duration::from_millis(200),
+                                                    connection.closed(),
+                                                )
+                                                .await
+                                                {
+                                                    Ok(quinn::ConnectionError::ApplicationClosed(app_close)) => {
                                                         let code = u64::from(app_close.error_code) as u32;
-                                                        TransferError::from_code(code).unwrap_or(TransferError::ConnectionLoss)
-                                                    } else {
-                                                        TransferError::ConnectionLoss
+                                                        TransferError::from_code(code)
+                                                            .unwrap_or(TransferError::ConnectionLoss)
                                                     }
-                                                } else {
-                                                    TransferError::Other(e.to_string())
+                                                    Ok(_) => TransferError::ConnectionLoss,
+                                                    // Timed out or connection not yet closed — fall back
+                                                    // to the original error-based classification.
+                                                    Err(_) => {
+                                                        if is_connection_error(&e) {
+                                                            TransferError::ConnectionLoss
+                                                        } else {
+                                                            TransferError::Other(e.to_string())
+                                                        }
+                                                    }
                                                 };
                                                 observer_clone.on_transfer_failed(transfer_id, &classification);
                                             }
@@ -241,7 +252,7 @@ impl ReceiverDaemon {
                                 }
                             }
                             Err(e) => {
-                                let classification = if Sender::is_connection_error(&e) {
+                                let classification = if is_connection_error(&e) {
                                     let close_err = connection.closed().await;
                                     if let quinn::ConnectionError::ApplicationClosed(app_close) =
                                         close_err
@@ -353,7 +364,7 @@ impl PendingTransfer {
         observer: Arc<dyn TransferObserver>,
         transfer_id: Uuid,
         cancel_token: CancellationToken,
-        overwrite: bool,
+        mode: TransferMode,
     ) -> anyhow::Result<AcceptResult> {
         match self.request.payload {
             TransferPayload::File(manifest) => {
@@ -361,7 +372,7 @@ impl PendingTransfer {
 
                 let target_dir_clone = target_dir.to_path_buf();
                 let (instructions, staging) = tokio::task::spawn_blocking(move || {
-                    protocol::manifest::parse(manifest, &target_dir_clone, overwrite)
+                    protocol::manifest::parse(manifest, &target_dir_clone, mode)
                 })
                 .await??;
 
@@ -456,12 +467,15 @@ pub struct Receiver {
 
 impl Receiver {
     pub async fn process_chunks(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
+        log::info!("Receiver: starting process_chunks");
         let mut join_set = tokio::task::JoinSet::new();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));
 
+        log::debug!("Receiver: waiting to accept uni stream for chunk count");
         let mut recv = self.connection.accept_uni().await?;
         let buf = recv.read_to_end(64).await?;
         let chunk_count: usize = rmp_serde::from_slice(&buf)?;
+        log::info!("Receiver: expects to receive {} chunks", chunk_count);
 
         for _ in 0..chunk_count {
             let mut chunk_stream = self.connection.accept_uni().await?;

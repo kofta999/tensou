@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { ZenButton, ZenToggle } from "components.slint";
+import { ZenButton, ZenToggle, SegmentedControl } from "components.slint";
 import { Input } from "slintcn/components/input.slint";
 import { Theme, AppData, Logic } from "globals.slint";
 
@@ -150,32 +150,31 @@ export component SettingsView inherits Rectangle {
                         padding: 16px;
                         spacing: 16px;
 
-                        HorizontalLayout {
-                            alignment: space-between;
+                        VerticalLayout {
+                            spacing: 10px;
                             VerticalLayout {
-                                alignment: center;
                                 spacing: 2px;
                                 Text {
-                                    text: "Overwrite Existing Files";
+                                    text: "Transfer Conflict Mode";
                                     color: Theme.text-primary;
                                     font-size: 13px;
                                     font-weight: 600;
                                 }
 
                                 Text {
-                                    text: "Replace local files if they have the same name";
+                                    text: "How to handle incoming files with conflicting names";
                                     color: Theme.text-secondary;
                                     font-size: 11px;
                                 }
                             }
 
-                            ZenToggle {
-                                checked: AppData.overwrite_dest;
-                                toggled(val) => {
-                                    AppData.overwrite_dest = val;
-                                    Logic.toggle_overwrite_dest(val);
+                            SegmentedControl {
+                                options: ["Keep Both", "Overwrite", "Sync"];
+                                selected_index: AppData.transfer_mode;
+                                selected(index) => {
+                                    AppData.transfer_mode = index;
+                                    Logic.set_transfer_mode(index);
                                 }
-                                y: (parent.height - self.height) / 2;
                             }
                         }
 

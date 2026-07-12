@@ -13,7 +13,8 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use tensou_core::config::Config;
 use tensou_core::net;
-use tensou_core::protocol::{SenderInfo, TransferError};
+use tensou_core::net::is_connection_error;
+use tensou_core::protocol::{SenderInfo, TransferError, TransferMode};
 use tensou_core::util::generate_job_name;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -140,12 +141,16 @@ pub fn setup(
         }
     });
 
-    // Toggle Overwrite
-    main_window.global::<Logic>().on_toggle_overwrite_dest({
+    // Set Transfer Mode
+    main_window.global::<Logic>().on_set_transfer_mode({
         let config = config.clone();
         move |val| {
             let mut cfg = config.lock().unwrap();
-            cfg.overwrite_dest = val;
+            cfg.transfer_mode = match val {
+                1 => TransferMode::Overwrite,
+                2 => TransferMode::Sync,
+                _ => TransferMode::Unique,
+            };
             let _ = cfg.save();
         }
     });
@@ -502,7 +507,7 @@ fn send_file_background(
                         // don't fire a redundant TransferFailed event here.
                     }
                     Err(e) => {
-                        let error = if net::Sender::is_connection_error(&e) {
+                        let error = if is_connection_error(&e) {
                             TransferError::ConnectionLoss
                         } else {
                             TransferError::Other(e.to_string())
@@ -516,7 +521,7 @@ fn send_file_background(
             }
             Ok(None) => {}
             Err(e) => {
-                let error = if net::Sender::is_connection_error(&e) {
+                let error = if is_connection_error(&e) {
                     TransferError::ConnectionLoss
                 } else {
                     TransferError::Other(format!("Connection failed: {}", e))
