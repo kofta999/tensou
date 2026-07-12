@@ -135,8 +135,8 @@ pub fn spawn_transfers(
                             };
 
                              if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
-                                 dbg!(&t.id);
                                 t.cancel_token = cancel_token;
+                                t.is_paused = is_paused;
                                 t.bytes_done_at_start = bytes_done;
                                 t.bytes_transferred = bytes_done;
                                 t.start_time = std::time::Instant::now();
