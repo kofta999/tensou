@@ -5,6 +5,10 @@ on:
     branches:
       - master
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release-plz-release:
     name: Release-plz release
@@ -38,9 +42,6 @@ jobs:
     permissions:
       pull-requests: write
       contents: write
-    concurrency:
-      group: release-plz-${{ github.ref }}
-      cancel-in-progress: false
     steps:
       - *checkout
       - *install-rust
