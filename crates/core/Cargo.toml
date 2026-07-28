@@ -30,3 +30,12 @@ fs4 = "1.1.0"
 [dev-dependencies]
 file_diff = "1.0.0"
 tempfile = "3.27.0"
+criterion = "0.8.2"
+
+[[bench]]
+name = "transfer"
+harness = false
+
+[[bench]]
+name = "manifest"
+harness = false
