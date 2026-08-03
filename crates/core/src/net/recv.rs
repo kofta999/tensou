@@ -15,9 +15,11 @@ use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
     collections::{HashMap, HashSet},
+    io::Write,
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
+    time::SystemTime,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinSet;
@@ -207,7 +209,7 @@ impl ReceiverDaemon {
                                         observer_clone.on_transfer_failed(transfer_id, &TransferError::Cancelled);
                                     }
 
-                                    res = receiver.process_chunks(work_cancel_token.clone()) => {
+                                    res = receiver.process_chunks(work_cancel_token.clone(), &observer_clone) => {
                                         match res {
                                             Ok(_) => {
                                                 observer_clone.on_transfer_complete(transfer_id);
@@ -388,14 +390,23 @@ impl PendingTransfer {
                         let is_small = ins.metadata.size <= ins.metadata.chunk_size;
                         let mut dirs = Vec::with_capacity(2);
                         if is_small {
-                            if let Some(p) = staging_clone.final_path(&ins.metadata.relative_path).parent() {
+                            if let Some(p) = staging_clone
+                                .final_path(&ins.metadata.relative_path)
+                                .parent()
+                            {
                                 dirs.push(p.to_path_buf());
                             }
                         } else {
-                            if let Some(p) = staging_clone.part_path(&ins.metadata.relative_path).parent() {
+                            if let Some(p) = staging_clone
+                                .part_path(&ins.metadata.relative_path)
+                                .parent()
+                            {
                                 dirs.push(p.to_path_buf());
                             }
-                            if let Some(p) = staging_clone.final_path(&ins.metadata.relative_path).parent() {
+                            if let Some(p) = staging_clone
+                                .final_path(&ins.metadata.relative_path)
+                                .parent()
+                            {
                                 dirs.push(p.to_path_buf());
                             }
                         }
@@ -462,6 +473,7 @@ impl PendingTransfer {
                     total_size: total_remaining_size,
                     total_full_size,
                     job_name,
+                    transfer_id,
                     sessions: Arc::new(sessions),
                     staging: staging.clone(),
                 }))
@@ -493,12 +505,17 @@ pub struct Receiver {
     pub(super) total_size: u64,
     pub(super) total_full_size: u64,
     pub(super) job_name: String,
+    pub(super) transfer_id: Uuid,
     pub(super) sessions: Arc<HashMap<FileId, Arc<ReceiveSession>>>,
     pub(super) staging: Arc<TransferStaging>,
 }
 
 impl Receiver {
-    async fn process_small_files(&self, _cancel_token: CancellationToken) -> anyhow::Result<()> {
+    async fn process_small_files(
+        &self,
+        _cancel_token: CancellationToken,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
         let mut recv = self.connection.accept_uni().await?;
 
         let file_count = match recv.read_u64().await {
@@ -512,20 +529,39 @@ impl Receiver {
             recv.read_exact(&mut path_buf).await?;
             let relative_path = String::from_utf8(path_buf)?;
 
+            let modified = recv.read_u64().await?;
+
             let data_len = recv.read_u64().await? as usize;
             let mut data = vec![0u8; data_len];
             recv.read_exact(&mut data).await?;
 
             let final_path = self.staging.final_path(&relative_path);
             self.staging.create_file_destination_dir(&relative_path)?;
-            std::fs::write(&final_path, &data)?;
+
+            let mut f = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&final_path)?;
+            f.write_all(&data)?;
+            if let Err(e) = f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(modified)) {
+                log::warn!("Failed to set mtime for {:?}: {}", final_path, e);
+            }
+
+            observer.on_chunk_transferred(self.transfer_id, data_len as u64);
         }
 
         Ok(())
     }
 
-    pub async fn process_chunks(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
-        self.process_small_files(cancel_token.clone()).await?;
+    pub async fn process_chunks(
+        self,
+        cancel_token: CancellationToken,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        self.process_small_files(cancel_token.clone(), observer)
+            .await?;
         self.process_large_files(cancel_token).await
     }
 

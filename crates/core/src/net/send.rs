@@ -166,7 +166,7 @@ impl Sender {
         log::info!("Sender: starting process_chunks loop");
         loop {
             log::info!("Sender: starting small files transfer");
-            self.stream_small_files().await?;
+            self.stream_small_files(&observer).await?;
 
             // Re-dervied from remote_states bitvec on reconnection
             let task_list = self.flatten();
@@ -214,7 +214,7 @@ impl Sender {
         Ok(())
     }
 
-    async fn stream_small_files(&self) -> anyhow::Result<()> {
+    async fn stream_small_files(&self, observer: &Arc<dyn TransferObserver>) -> anyhow::Result<()> {
         if let TransferPayload::Files(Manifest { small_files, .. }) = &self.request.payload {
             let files_to_send: Vec<&Metadata> = small_files
                 .iter()
@@ -233,10 +233,14 @@ impl Sender {
 
                 sender.write_u64(file.relative_path.len() as u64).await?;
                 sender.write_all(file.relative_path.as_bytes()).await?;
+                sender.write_u64(file.modified).await?;
                 sender.write_u64(file.size).await?;
 
+                // NOTE: Might need a perf optimization using channels + spawn_blocking later
                 let data = std::fs::read(path)?;
                 sender.write_all(&data).await?;
+
+                observer.on_chunk_transferred(self.transfer_id, file.size);
             }
 
             sender.finish()?;
