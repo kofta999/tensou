@@ -143,17 +143,17 @@ pub fn parse(
 
         let final_path = &staging.final_path(&metadata.relative_path);
 
-        log::info!(
-            "Parsing file '{:?}' with transfer_mode {:?}",
-            metadata.relative_path,
-            transfer_mode
-        );
+        // log::info!(
+        //     "Parsing file '{:?}' with transfer_mode {:?}",
+        //     metadata.relative_path,
+        //     transfer_mode
+        // );
 
         match transfer_mode {
             TransferMode::Unique => {
                 let mut instruction = JobInstruction::new(metadata);
                 let state_path = &staging.state_path(&instruction.metadata.relative_path);
-                log::debug!("Unique mode: loading state from disk for {:?}", final_path);
+                // log::debug!("Unique mode: loading state from disk for {:?}", final_path);
                 instruction.load_state_from_disk(state_path, final_path, false)?;
 
                 // If the file is already complete (size 0) and does not exist at final destination,
@@ -172,10 +172,10 @@ pub fn parse(
             TransferMode::Overwrite => {
                 let mut instruction = JobInstruction::new(metadata);
                 let state_path = &staging.state_path(&instruction.metadata.relative_path);
-                log::debug!(
-                    "Overwrite mode: loading state from disk (overwrite=true) for {:?}",
-                    final_path
-                );
+                // log::debug!(
+                //     "Overwrite mode: loading state from disk (overwrite=true) for {:?}",
+                //     final_path
+                // );
                 instruction.load_state_from_disk(state_path, final_path, true)?;
                 if instruction.state.0.all() {
                     log::info!(

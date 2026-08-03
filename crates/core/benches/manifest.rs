@@ -55,7 +55,7 @@ const FIXTURES: &[Fixture] = &[
 fn benchmark_manifest(c: &mut Criterion) {
     let mut group = c.benchmark_group("manifest");
     group.sample_size(10);
-    group.measurement_time(std::time::Duration::from_secs(60));
+    group.measurement_time(std::time::Duration::from_secs(30));
 
     for fixture in FIXTURES {
         let tempdir = fixture.create_dir();

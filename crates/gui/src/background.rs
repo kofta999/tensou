@@ -171,7 +171,7 @@ pub fn spawn_transfers(
                         }
                         GuiEvent::ChunkTransferred { transfer_id, bytes } => {
                             if let Some(t) = transfers.iter_mut().find(|x| x.id == transfer_id) {
-                                t.bytes_transferred += bytes;
+                                t.bytes_transferred = (t.bytes_transferred + bytes).min(t.total_bytes);
                             }
                             active_dirty = true;
                         }
@@ -314,12 +314,13 @@ pub fn spawn_transfers(
                             Some(transfers
                                 .iter()
                                 .map(|t| {
-                                     let trans_mb = t.bytes_transferred as f64 / 1_048_576.0;
+                                    let display_bytes = t.bytes_transferred.min(t.total_bytes);
+                                    let trans_mb = display_bytes as f64 / 1_048_576.0;
                                     let total_mb = t.total_bytes as f64 / 1_048_576.0;
-                                    let remaining = t.total_bytes.saturating_sub(t.bytes_transferred);
+                                    let remaining = t.total_bytes.saturating_sub(display_bytes);
 
                                     let progress = if t.total_bytes > 0 {
-                                        t.bytes_transferred as f32 / t.total_bytes as f32
+                                        (display_bytes as f32 / t.total_bytes as f32).min(1.0)
                                     } else {
                                         0.0
                                     };
