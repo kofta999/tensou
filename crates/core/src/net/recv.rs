@@ -15,7 +15,6 @@ use quinn::{Endpoint, ServerConfig, TransportConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
     collections::{HashMap, HashSet},
-    io::Write,
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
@@ -510,6 +509,64 @@ pub struct Receiver {
     pub(super) staging: Arc<TransferStaging>,
 }
 
+struct SmallFilePayload {
+    relative_path: String,
+    modified: u64,
+    data: Vec<u8>,
+}
+
+fn write_small_files_to_disk(
+    rx: std::sync::mpsc::Receiver<SmallFilePayload>,
+    staging: Arc<TransferStaging>,
+    observer: Arc<dyn TransferObserver>,
+    transfer_id: Uuid,
+) -> anyhow::Result<()> {
+    while let Ok(payload) = rx.recv() {
+        let data_len = payload.data.len() as u64;
+        let final_path = staging.final_path(&payload.relative_path);
+        staging.create_file_destination_dir(&payload.relative_path)?;
+        std::fs::write(&final_path, &payload.data)?;
+
+        if let Ok(f) = std::fs::File::open(&final_path) {
+            let _ = f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(payload.modified));
+        }
+
+        observer.on_chunk_transferred(transfer_id, data_len);
+    }
+    Ok(())
+}
+
+async fn read_small_files_from_stream<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    file_count: u64,
+    tx: std::sync::mpsc::SyncSender<SmallFilePayload>,
+) -> anyhow::Result<()> {
+    for _ in 0..file_count {
+        let path_len = reader.read_u64().await? as usize;
+        let mut path_buf = vec![0u8; path_len];
+        reader.read_exact(&mut path_buf).await?;
+        let relative_path = String::from_utf8(path_buf)?;
+
+        let modified = reader.read_u64().await?;
+
+        let data_len = reader.read_u64().await? as usize;
+        let mut data = vec![0u8; data_len];
+        reader.read_exact(&mut data).await?;
+
+        if tx
+            .send(SmallFilePayload {
+                relative_path,
+                modified,
+                data,
+            })
+            .is_err()
+        {
+            anyhow::bail!("Disk writer worker disconnected prematurely");
+        }
+    }
+    Ok(())
+}
+
 impl Receiver {
     async fn process_small_files(
         &self,
@@ -523,34 +580,26 @@ impl Receiver {
             Err(_) => return Ok(()),
         };
 
-        for _ in 0..file_count {
-            let path_len = recv.read_u64().await? as usize;
-            let mut path_buf = vec![0u8; path_len];
-            recv.read_exact(&mut path_buf).await?;
-            let relative_path = String::from_utf8(path_buf)?;
+        let mut reader = tokio::io::BufReader::with_capacity(1_048_576, recv);
 
-            let modified = recv.read_u64().await?;
+        let (tx, rx) = std::sync::mpsc::sync_channel::<SmallFilePayload>(64);
+        let staging = self.staging.clone();
+        let observer_clone = observer.clone();
+        let transfer_id = self.transfer_id;
 
-            let data_len = recv.read_u64().await? as usize;
-            let mut data = vec![0u8; data_len];
-            recv.read_exact(&mut data).await?;
+        let disk_handle = std::thread::spawn(move || {
+            write_small_files_to_disk(rx, staging, observer_clone, transfer_id)
+        });
 
-            let final_path = self.staging.final_path(&relative_path);
-            self.staging.create_file_destination_dir(&relative_path)?;
+        let net_res = read_small_files_from_stream(&mut reader, file_count, tx.clone()).await;
+        drop(tx);
 
-            let mut f = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(&final_path)?;
-            f.write_all(&data)?;
-            if let Err(e) = f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(modified)) {
-                log::warn!("Failed to set mtime for {:?}: {}", final_path, e);
-            }
+        let disk_res = disk_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("Disk writer thread panicked"))?;
 
-            observer.on_chunk_transferred(self.transfer_id, data_len as u64);
-        }
+        net_res?;
+        disk_res?;
 
         Ok(())
     }

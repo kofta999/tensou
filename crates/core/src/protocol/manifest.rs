@@ -113,7 +113,7 @@ pub fn parse(
         let should_skip = match transfer_mode {
             TransferMode::Unique => final_path.exists(),
             TransferMode::Overwrite => false,
-            TransferMode::Sync => std::fs::metadata(final_path).map_or(false, |local_meta| {
+            TransferMode::Sync => std::fs::metadata(final_path).is_ok_and(|local_meta| {
                 let local_mtime = local_meta
                     .modified()
                     .ok()
@@ -249,13 +249,10 @@ pub fn parse(
     Ok((instructions, staging, State(small_files_state)))
 }
 
-pub fn build(
-    paths: &[PathBuf],
-) -> anyhow::Result<(
-    Manifest,
-    HashMap<FileId, Arc<SendSession>>,
-    HashMap<FileId, PathBuf>,
-)> {
+pub type SendSessionMap = HashMap<FileId, Arc<SendSession>>;
+pub type SmallFileMap = HashMap<FileId, PathBuf>;
+
+pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, SendSessionMap, SmallFileMap)> {
     let mut large_files = Vec::new();
     let mut small_files = Vec::new();
     let mut sessions = HashMap::new();

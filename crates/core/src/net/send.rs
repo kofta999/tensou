@@ -38,6 +38,67 @@ pub enum SendType<'a> {
     Text(String),
 }
 
+struct SmallFileSendTask {
+    metadata: Metadata,
+    data: Vec<u8>,
+}
+
+fn spawn_parallel_small_file_readers(
+    targets: Vec<(Metadata, PathBuf)>,
+    cancel_token: CancellationToken,
+    tx: tokio::sync::mpsc::Sender<SmallFileSendTask>,
+) {
+    tokio::spawn(async move {
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(16));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for (meta, path) in targets {
+            if cancel_token.is_cancelled() {
+                break;
+            }
+            let permit = match semaphore.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            let tx = tx.clone();
+            join_set.spawn_blocking(move || {
+                let _permit = permit;
+                if let Ok(data) = std::fs::read(&path) {
+                    let _ = tx.blocking_send(SmallFileSendTask {
+                        metadata: meta,
+                        data,
+                    });
+                }
+            });
+        }
+
+        while join_set.join_next().await.is_some() {}
+    });
+}
+
+async fn write_small_files_to_stream(
+    sender: &mut quinn::SendStream,
+    mut rx: tokio::sync::mpsc::Receiver<SmallFileSendTask>,
+    observer: &Arc<dyn TransferObserver>,
+    transfer_id: Uuid,
+) -> anyhow::Result<()> {
+    while let Some(task) = rx.recv().await {
+        sender
+            .write_u64(task.metadata.relative_path.len() as u64)
+            .await?;
+        sender
+            .write_all(task.metadata.relative_path.as_bytes())
+            .await?;
+        sender.write_u64(task.metadata.modified).await?;
+        sender.write_u64(task.metadata.size).await?;
+        sender.write_all(&task.data).await?;
+
+        observer.on_chunk_transferred(transfer_id, task.metadata.size);
+    }
+    sender.finish()?;
+    Ok(())
+}
+
 impl Sender {
     pub async fn connect(
         server_addr: SocketAddr,
@@ -225,25 +286,22 @@ impl Sender {
             let mut sender = self.connection_manager.open_uni().await?;
             sender.write_u64(files_to_send.len() as u64).await?;
 
-            for file in files_to_send {
-                let path = self
-                    .small_files_paths
-                    .get(&file.file_id)
-                    .expect("Small FileId must be there");
+            let small_files_paths = self.small_files_paths.clone();
+            let targets: Vec<(Metadata, PathBuf)> = files_to_send
+                .into_iter()
+                .map(|f| {
+                    let path = small_files_paths
+                        .get(&f.file_id)
+                        .expect("Small FileId must be there")
+                        .clone();
+                    (f.clone(), path)
+                })
+                .collect();
 
-                sender.write_u64(file.relative_path.len() as u64).await?;
-                sender.write_all(file.relative_path.as_bytes()).await?;
-                sender.write_u64(file.modified).await?;
-                sender.write_u64(file.size).await?;
+            let (tx, rx) = tokio::sync::mpsc::channel::<SmallFileSendTask>(64);
+            spawn_parallel_small_file_readers(targets, self.cancel_token.clone(), tx);
 
-                // NOTE: Might need a perf optimization using channels + spawn_blocking later
-                let data = std::fs::read(path)?;
-                sender.write_all(&data).await?;
-
-                observer.on_chunk_transferred(self.transfer_id, file.size);
-            }
-
-            sender.finish()?;
+            write_small_files_to_stream(&mut sender, rx, observer, self.transfer_id).await?;
         }
 
         Ok(())
