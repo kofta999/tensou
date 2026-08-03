@@ -123,12 +123,10 @@ fn benchmark_transfer(c: &mut Criterion) {
 
     for fixture in FIXTURES {
         let source_dir = tempfile::tempdir().unwrap();
-        let mut paths = Vec::new();
 
         for i in 0..fixture.count {
             let source_path = source_dir.path().join(format!("{i}_{}.bin", fixture.name));
             create_test_file(&source_path, fixture.size, fixture.chunk_size as usize);
-            paths.push(source_path);
         }
 
         group.throughput(Throughput::Bytes(fixture.count * fixture.size));
@@ -149,7 +147,7 @@ fn benchmark_transfer(c: &mut Criterion) {
                     rt.block_on(async {
                         let mut client = Sender::connect(
                             addr,
-                            SendType::Files(&paths),
+                            SendType::Files(&[source_dir.path().to_path_buf()]),
                             make_sender_info(),
                             CancellationToken::new(),
                             Uuid::new_v4(),
@@ -179,5 +177,23 @@ fn benchmark_transfer(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_transfer);
+fn benchmark_disk_baseline(c: &mut Criterion) {
+    let data = vec![0xABu8; 4096];
+    let mut group = c.benchmark_group("disk_baseline");
+    group.sample_size(10);
+
+    group.bench_function("10K_raw_creates_tmpfs", |b| {
+        b.iter(|| {
+            let dir = tempfile::tempdir().unwrap();
+            for i in 0..10_000u64 {
+                let path = dir.path().join(format!("file_{i}.bin"));
+                std::fs::write(&path, &data).unwrap();
+            }
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, benchmark_transfer, benchmark_disk_baseline);
 criterion_main!(benches);
