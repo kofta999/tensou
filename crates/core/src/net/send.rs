@@ -2,7 +2,10 @@ use crate::{
     ChunkIndex, FileId, MAX_CONCURRENT_STREAMS, MAX_REQUEST_SIZE,
     disk::SendSession,
     net::{connection_manager::ConnectionManager, is_connection_error},
-    protocol::{self, SenderInfo, State, TransferObserver, TransferPayload, TransferRequest},
+    protocol::{
+        self, Manifest, Metadata, SenderInfo, State, TransferObserver, TransferPayload,
+        TransferRequest,
+    },
 };
 use std::{
     collections::HashMap,
@@ -21,7 +24,9 @@ use uuid::Uuid;
 pub struct Sender {
     connection_manager: ConnectionManager,
     sessions: HashMap<FileId, Arc<SendSession>>,
-    remote_states: Vec<State>,
+    small_files_paths: HashMap<FileId, PathBuf>,
+    remote_large_file_states: Vec<State>,
+    remote_small_files_state: State,
     request: TransferRequest,
     pub transfer_id: Uuid,
     pub cancel_token: CancellationToken,
@@ -43,16 +48,17 @@ impl Sender {
     ) -> anyhow::Result<Option<Self>> {
         log::info!("Preparing transfer manifest for: {:?}", send_type);
 
-        let (request, sessions) = match send_type {
+        let (request, sessions, small_files_paths) = match send_type {
             SendType::Files(paths) => {
                 let res = protocol::manifest::build(paths)?;
                 (
                     TransferRequest {
                         transfer_id,
-                        payload: TransferPayload::File(res.0),
+                        payload: TransferPayload::Files(res.0),
                         sender: sender_info,
                     },
                     Some(res.1),
+                    Some(res.2),
                 )
             }
             SendType::Text(content) => (
@@ -61,6 +67,7 @@ impl Sender {
                     payload: TransferPayload::Text(content),
                     sender: sender_info,
                 },
+                None,
                 None,
             ),
         };
@@ -93,20 +100,26 @@ impl Sender {
             anyhow::bail!("The receiver rejected your transfer request.");
         }
 
-        let sessions = match sessions {
-            Some(s) => s,
-            None => return Ok(None),
+        let Some(sessions) = sessions else {
+            return Ok(None);
+        };
+
+        let Some(small_files_paths) = small_files_paths else {
+            return Ok(None);
         };
 
         log::info!("Transfer accepted. Reading remote states...");
         let buf = recv.read_to_end(MAX_REQUEST_SIZE as usize).await?;
-        let remote_states: Vec<State> = rmp_serde::from_slice(&buf)?;
+        let (remote_large_file_states, remote_small_files_state): (Vec<State>, State) =
+            rmp_serde::from_slice(&buf)?;
         log::debug!("Successfully loaded remote transfer state.");
 
         Ok(Some(Self {
             connection_manager,
             sessions,
-            remote_states,
+            small_files_paths,
+            remote_large_file_states,
+            remote_small_files_state,
             request,
             cancel_token,
             transfer_id,
@@ -152,6 +165,9 @@ impl Sender {
     ) -> anyhow::Result<()> {
         log::info!("Sender: starting process_chunks loop");
         loop {
+            log::info!("Sender: starting small files transfer");
+            self.stream_small_files().await?;
+
             // Re-dervied from remote_states bitvec on reconnection
             let task_list = self.flatten();
             log::info!(
@@ -195,6 +211,37 @@ impl Sender {
         log::info!("Sender: closing connection gracefully");
         self.connection_manager.close_gracefully().await;
         log::info!("Sender: process_chunks finished successfully");
+        Ok(())
+    }
+
+    async fn stream_small_files(&self) -> anyhow::Result<()> {
+        if let TransferPayload::Files(Manifest { small_files, .. }) = &self.request.payload {
+            let files_to_send: Vec<&Metadata> = small_files
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| (!self.remote_small_files_state.0[i]).then_some(f))
+                .collect();
+
+            let mut sender = self.connection_manager.open_uni().await?;
+            sender.write_u64(files_to_send.len() as u64).await?;
+
+            for file in files_to_send {
+                let path = self
+                    .small_files_paths
+                    .get(&file.file_id)
+                    .expect("Small FileId must be there");
+
+                sender.write_u64(file.relative_path.len() as u64).await?;
+                sender.write_all(file.relative_path.as_bytes()).await?;
+                sender.write_u64(file.size).await?;
+
+                let data = std::fs::read(path)?;
+                sender.write_all(&data).await?;
+            }
+
+            sender.finish()?;
+        }
+
         Ok(())
     }
 
@@ -289,12 +336,13 @@ impl Sender {
         self.connection_manager
             .reconnect(self.transfer_id, observer.as_ref(), &self.cancel_token)
             .await?;
-        self.remote_states = self.resend_manifest().await?;
+        (self.remote_large_file_states, self.remote_small_files_state) =
+            self.resend_manifest().await?;
         Ok(())
     }
 
     /// Re-sends the stored TransferRequest (same UUID) and reads fresh bitvec from receiver.
-    async fn resend_manifest(&self) -> anyhow::Result<Vec<State>> {
+    async fn resend_manifest(&self) -> anyhow::Result<(Vec<State>, State)> {
         let (mut send, mut recv) = self.connection_manager.open_bi().await?;
         let buf = rmp_serde::to_vec(&self.request)?;
         send.write_all(&buf).await?;
@@ -316,7 +364,7 @@ impl Sender {
         for (file_id, session) in &self.sessions {
             for chunk_idx in 0..session.get_total_chunks() {
                 if self
-                    .remote_states
+                    .remote_large_file_states
                     .get(*file_id)
                     .and_then(|s| s.0.get(chunk_idx))
                     .is_some_and(|v| *v)

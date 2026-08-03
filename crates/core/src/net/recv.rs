@@ -367,29 +367,61 @@ impl PendingTransfer {
         mode: TransferMode,
     ) -> anyhow::Result<AcceptResult> {
         match self.request.payload {
-            TransferPayload::File(manifest) => {
+            TransferPayload::Files(manifest) => {
                 let job_name = manifest.job_name.clone();
 
                 let target_dir_clone = target_dir.to_path_buf();
-                let (instructions, staging) = tokio::task::spawn_blocking(move || {
-                    protocol::manifest::parse(manifest, &target_dir_clone, mode)
+                let (instructions, staging, small_files_state) =
+                    tokio::task::spawn_blocking(move || {
+                        protocol::manifest::parse(manifest, &target_dir_clone, mode)
+                    })
+                    .await??;
+
+                // Pre-create all unique destination and staging directories
+                // before any data flows. This collapses the per-file create_dir_all
+                // calls (each causing ~22 statx syscalls) into a single upfront pass.
+                let staging_clone = staging.clone();
+                let ins_ref = &instructions;
+                let unique_dirs: HashSet<std::path::PathBuf> = ins_ref
+                    .iter()
+                    .flat_map(|ins| {
+                        let is_small = ins.metadata.size <= ins.metadata.chunk_size;
+                        let mut dirs = Vec::with_capacity(2);
+                        if is_small {
+                            if let Some(p) = staging_clone.final_path(&ins.metadata.relative_path).parent() {
+                                dirs.push(p.to_path_buf());
+                            }
+                        } else {
+                            if let Some(p) = staging_clone.part_path(&ins.metadata.relative_path).parent() {
+                                dirs.push(p.to_path_buf());
+                            }
+                            if let Some(p) = staging_clone.final_path(&ins.metadata.relative_path).parent() {
+                                dirs.push(p.to_path_buf());
+                            }
+                        }
+                        dirs
+                    })
+                    .collect();
+                let staging_clone2 = staging.clone();
+                tokio::task::spawn_blocking(move || {
+                    staging_clone2.prepare()?;
+                    for dir in unique_dirs {
+                        std::fs::create_dir_all(dir)?;
+                    }
+                    std::io::Result::Ok(())
                 })
                 .await??;
 
-                let staging_clone = staging.clone();
-                tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
-
-                let (total_remaining_size, total_full_size, states) = instructions.iter().fold(
-                    (0, 0, Vec::new()),
-                    |(remaining, full, mut states), ins| {
+                let (total_remaining_size, total_full_size, large_file_states) = instructions
+                    .iter()
+                    .fold((0, 0, Vec::new()), |(remaining, full, mut states), ins| {
                         states.push(&ins.state);
                         (
                             remaining + ins.remaining_bytes,
                             full + ins.metadata.size,
                             states,
                         )
-                    },
-                );
+                    });
 
                 if !Self::is_space_available(total_remaining_size, target_dir).await {
                     let _ = staging.cleanup();
@@ -401,7 +433,7 @@ impl PendingTransfer {
 
                 self.send_stream.write_u8(1).await?;
 
-                let state_buf = rmp_serde::to_vec(&states)?;
+                let state_buf = rmp_serde::to_vec(&(large_file_states, small_files_state))?;
 
                 self.send_stream.write_all(&state_buf).await?;
                 self.send_stream.finish()?;
@@ -466,7 +498,38 @@ pub struct Receiver {
 }
 
 impl Receiver {
+    async fn process_small_files(&self, _cancel_token: CancellationToken) -> anyhow::Result<()> {
+        let mut recv = self.connection.accept_uni().await?;
+
+        let file_count = match recv.read_u64().await {
+            Ok(count) => count,
+            Err(_) => return Ok(()),
+        };
+
+        for _ in 0..file_count {
+            let path_len = recv.read_u64().await? as usize;
+            let mut path_buf = vec![0u8; path_len];
+            recv.read_exact(&mut path_buf).await?;
+            let relative_path = String::from_utf8(path_buf)?;
+
+            let data_len = recv.read_u64().await? as usize;
+            let mut data = vec![0u8; data_len];
+            recv.read_exact(&mut data).await?;
+
+            let final_path = self.staging.final_path(&relative_path);
+            self.staging.create_file_destination_dir(&relative_path)?;
+            std::fs::write(&final_path, &data)?;
+        }
+
+        Ok(())
+    }
+
     pub async fn process_chunks(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
+        self.process_small_files(cancel_token.clone()).await?;
+        self.process_large_files(cancel_token).await
+    }
+
+    async fn process_large_files(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
         log::info!("Receiver: starting process_chunks");
         let mut join_set = tokio::task::JoinSet::new();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));
