@@ -237,7 +237,8 @@ impl Sender {
                 })
                 .collect();
 
-            let (tx, rx) = tokio::sync::mpsc::channel::<SmallFileSendTask>(64);
+            let (tx, rx) =
+                tokio::sync::mpsc::channel::<SmallFileSendTask>(crate::SMALL_FILES_CHANNEL_CAPACITY);
             crate::disk::spawn_parallel_small_file_readers(targets, self.cancel_token.clone(), tx);
 
             Self::write_small_files_to_stream(&mut sender, rx, observer, self.transfer_id).await?;

@@ -73,7 +73,9 @@ pub fn spawn_parallel_small_file_readers(
     tx: tokio::sync::mpsc::Sender<SmallFileSendTask>,
 ) {
     tokio::spawn(async move {
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(16));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(
+            crate::SMALL_FILES_MAX_CONCURRENT_READS,
+        ));
         let mut join_set = tokio::task::JoinSet::new();
 
         for (meta, path) in targets {
