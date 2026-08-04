@@ -3,7 +3,7 @@ use crate::{
     QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW, REQUEST_READ_TIMEOUT_SECS,
     config::Config,
     discovery,
-    disk::{IgnitionPayload, ReceiveSession, TransferStaging},
+    disk::{ReceiveSession, SmallFilePayload, TransferStaging},
     net::is_connection_error,
     protocol::{
         self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferError, TransferMode,
@@ -18,7 +18,6 @@ use std::{
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
-    time::SystemTime,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinSet;
@@ -451,20 +450,15 @@ impl PendingTransfer {
                 let mut sessions = HashMap::new();
 
                 for ins in instructions.into_iter() {
-                    let (tx, rx) =
-                        tokio::sync::mpsc::channel::<ChunkPacket>(MAX_CONCURRENT_STREAMS.into());
                     let file_id = ins.metadata.file_id;
-
-                    let payload = IgnitionPayload {
+                    let session = ReceiveSession::new(
                         ins,
-                        observer: observer.clone(),
-                        rx,
                         transfer_id,
-                        cancel_token: cancel_token.clone(),
-                        staging: staging.clone(),
-                    };
-
-                    sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
+                        observer.clone(),
+                        cancel_token.clone(),
+                        staging.clone(),
+                    );
+                    sessions.insert(file_id, Arc::new(session));
                 }
 
                 Ok(AcceptResult::File(Receiver {
@@ -509,68 +503,52 @@ pub struct Receiver {
     pub(super) staging: Arc<TransferStaging>,
 }
 
-struct SmallFilePayload {
-    relative_path: String,
-    modified: u64,
-    data: Vec<u8>,
-}
-
-fn write_small_files_to_disk(
-    rx: std::sync::mpsc::Receiver<SmallFilePayload>,
-    staging: Arc<TransferStaging>,
-    observer: Arc<dyn TransferObserver>,
-    transfer_id: Uuid,
-) -> anyhow::Result<()> {
-    while let Ok(payload) = rx.recv() {
-        let data_len = payload.data.len() as u64;
-        let final_path = staging.final_path(&payload.relative_path);
-        staging.create_file_destination_dir(&payload.relative_path)?;
-        std::fs::write(&final_path, &payload.data)?;
-
-        if let Ok(f) = std::fs::File::open(&final_path) {
-            let _ = f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(payload.modified));
-        }
-
-        observer.on_chunk_transferred(transfer_id, data_len);
-    }
-    Ok(())
-}
-
-async fn read_small_files_from_stream<R: tokio::io::AsyncRead + Unpin>(
-    reader: &mut R,
-    file_count: u64,
-    tx: std::sync::mpsc::SyncSender<SmallFilePayload>,
-) -> anyhow::Result<()> {
-    for _ in 0..file_count {
-        let path_len = reader.read_u64().await? as usize;
-        let mut path_buf = vec![0u8; path_len];
-        reader.read_exact(&mut path_buf).await?;
-        let relative_path = String::from_utf8(path_buf)?;
-
-        let modified = reader.read_u64().await?;
-
-        let data_len = reader.read_u64().await? as usize;
-        let mut data = vec![0u8; data_len];
-        reader.read_exact(&mut data).await?;
-
-        if tx
-            .send(SmallFilePayload {
-                relative_path,
-                modified,
-                data,
-            })
-            .is_err()
-        {
-            anyhow::bail!("Disk writer worker disconnected prematurely");
-        }
-    }
-    Ok(())
-}
-
 impl Receiver {
+    async fn read_small_files_from_stream<R: tokio::io::AsyncRead + Unpin>(
+        reader: &mut R,
+        file_count: u64,
+        tx: std::sync::mpsc::SyncSender<SmallFilePayload>,
+        cancel_token: CancellationToken,
+    ) -> anyhow::Result<()> {
+        for _ in 0..file_count {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return anyhow::Ok(());
+                }
+
+                res = async {
+                    let path_len = reader.read_u64().await? as usize;
+                    let mut path_buf = vec![0u8; path_len];
+                    reader.read_exact(&mut path_buf).await?;
+                    let relative_path = String::from_utf8(path_buf)?;
+
+                    let modified = reader.read_u64().await?;
+
+                    let data_len = reader.read_u64().await? as usize;
+                    let mut data = vec![0u8; data_len];
+                    reader.read_exact(&mut data).await?;
+
+                    if tx
+                        .send(SmallFilePayload {
+                            relative_path,
+                            modified,
+                            data,
+                        })
+                        .is_err()
+                    {
+                        anyhow::bail!("Disk writer worker disconnected prematurely");
+                    }
+
+                    anyhow::Ok(())
+                } => res?
+            }
+        }
+        Ok(())
+    }
+
     async fn process_small_files(
         &self,
-        _cancel_token: CancellationToken,
+        cancel_token: CancellationToken,
         observer: &Arc<dyn TransferObserver>,
     ) -> anyhow::Result<()> {
         let mut recv = self.connection.accept_uni().await?;
@@ -588,10 +566,12 @@ impl Receiver {
         let transfer_id = self.transfer_id;
 
         let disk_handle = std::thread::spawn(move || {
-            write_small_files_to_disk(rx, staging, observer_clone, transfer_id)
+            crate::disk::write_small_files_to_disk(rx, staging, observer_clone, transfer_id)
         });
 
-        let net_res = read_small_files_from_stream(&mut reader, file_count, tx.clone()).await;
+        let net_res =
+            Self::read_small_files_from_stream(&mut reader, file_count, tx.clone(), cancel_token)
+                .await;
         drop(tx);
 
         let disk_res = disk_handle

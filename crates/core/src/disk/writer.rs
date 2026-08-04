@@ -18,7 +18,34 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub struct DiskWriter {
+pub struct SmallFilePayload {
+    pub relative_path: String,
+    pub modified: u64,
+    pub data: Vec<u8>,
+}
+
+pub fn write_small_files_to_disk(
+    rx: std::sync::mpsc::Receiver<SmallFilePayload>,
+    staging: Arc<TransferStaging>,
+    observer: Arc<dyn TransferObserver>,
+    transfer_id: Uuid,
+) -> anyhow::Result<()> {
+    while let Ok(payload) = rx.recv() {
+        let data_len = payload.data.len() as u64;
+        let final_path = staging.final_path(&payload.relative_path);
+        staging.create_file_destination_dir(&payload.relative_path)?;
+        std::fs::write(&final_path, &payload.data)?;
+
+        if let Ok(f) = std::fs::File::open(&final_path) {
+            let _ = f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(payload.modified));
+        }
+
+        observer.on_chunk_transferred(transfer_id, data_len);
+    }
+    Ok(())
+}
+
+struct ReceiveWriterWorker {
     metadata: Metadata,
     state: State,
     staging: Arc<TransferStaging>,
@@ -30,41 +57,18 @@ pub struct DiskWriter {
     cancel_token: CancellationToken,
 }
 
-impl DiskWriter {
-    pub fn new(
-        IgnitionPayload {
-            rx,
-            ins,
-            transfer_id,
-            observer,
-            cancel_token,
-            staging,
-        }: IgnitionPayload,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            state: ins.state,
-            metadata: ins.metadata,
-            is_resumed: ins.is_resumed,
-            staging,
-            file: None,
-            transfer_id,
-            rx,
-            observer,
-            cancel_token,
-        })
-    }
-
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+impl ReceiveWriterWorker {
+    async fn run(&mut self) -> anyhow::Result<()> {
         let mut chunks_since_save: u32 = 0;
         const SAVE_INTERVAL: u32 = 16;
 
         loop {
             tokio::select! {
-                _ = self.cancel_token.cancelled() =>  {
+                _ = self.cancel_token.cancelled() => {
                     if !self.is_complete() && self.is_resumed {
                         self.save_state().await?;
                     }
-                    return Ok(())
+                    return Ok(());
                 }
 
                 maybe_packet = self.rx.recv() => {
@@ -72,7 +76,6 @@ impl DiskWriter {
                         Some(packet) => {
                             let size = packet.bytes.len() as u64;
 
-                            // Cancel transfer on chunk hash failure (rare to happen, user can resume later)
                             if !self.write_chunk(packet).await? {
                                 self.cancel_token.cancel();
                                 anyhow::bail!("Chunk integrity check failed — retry the transfer");
@@ -118,7 +121,7 @@ impl DiskWriter {
         Ok(())
     }
 
-    pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
+    async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
         if packet.header.hash == ChunkHeader::hash_chunk(&packet.bytes) {
             let offset = packet.header.index * self.metadata.chunk_size;
             let part_path = self.staging.part_path(&self.metadata.relative_path);
@@ -212,45 +215,44 @@ impl DiskWriter {
     }
 }
 
-pub struct IgnitionPayload {
-    pub rx: ChunkPacketReceiver,
-    pub ins: JobInstruction,
-    pub transfer_id: Uuid,
-    pub observer: Arc<dyn TransferObserver>,
-    pub staging: Arc<TransferStaging>,
-    pub cancel_token: CancellationToken,
-}
-
 pub struct ReceiveSession {
     tx: ChunkPacketSender,
-    ignition: Mutex<Option<IgnitionPayload>>,
     pub(crate) writer_handle: Mutex<Option<task::JoinHandle<anyhow::Result<()>>>>,
 }
 
 impl ReceiveSession {
-    pub fn new(tx: ChunkPacketSender, ignition: IgnitionPayload) -> Self {
+    pub fn new(
+        ins: JobInstruction,
+        transfer_id: Uuid,
+        observer: Arc<dyn TransferObserver>,
+        cancel_token: CancellationToken,
+        staging: Arc<TransferStaging>,
+    ) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel::<ChunkPacket>(crate::MAX_CONCURRENT_STREAMS.into());
+        let mut worker = ReceiveWriterWorker {
+            metadata: ins.metadata,
+            state: ins.state,
+            staging,
+            is_resumed: ins.is_resumed,
+            file: None,
+            transfer_id,
+            rx,
+            observer,
+            cancel_token,
+        };
+
+        let handle = tokio::spawn(async move { worker.run().await });
+
         Self {
             tx,
-            ignition: Mutex::new(Some(ignition)),
-            writer_handle: Mutex::new(None),
+            writer_handle: Mutex::new(Some(handle)),
         }
     }
 
     pub async fn write_chunk(&self, header: ChunkHeader, bytes: Vec<u8>) -> anyhow::Result<()> {
-        if let Some(ign) = self.ignition.lock().unwrap().take() {
-            let handle = tokio::spawn(async move {
-                let mut writer = DiskWriter::new(ign)?;
-                writer.run().await
-            });
-
-            *self.writer_handle.lock().unwrap() = Some(handle);
-        }
-
-        // We've resumes, so it's no problem if we couldn't send a packet once
         if self.tx.send(ChunkPacket { header, bytes }).await.is_err() {
-            return anyhow::Ok(());
-        };
-
+            return Ok(());
+        }
         Ok(())
     }
 
