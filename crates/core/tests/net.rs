@@ -534,3 +534,73 @@ async fn test_reconnect_resumes_after_connection_drop() -> anyhow::Result<()> {
     server_handle.abort();
     Ok(())
 }
+
+/// Verifies that network transfer of small files preserves metadata, byte content, and modification times (mtime).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_small_files_mtime_and_integrity() -> anyhow::Result<()> {
+    use std::time::{Duration, SystemTime};
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let source_dir = tempdir()?;
+    let dest_dir = tempdir()?;
+    let source_folder = source_dir.path().join("small_tree");
+    let sub_folder = source_folder.join("nested");
+    std::fs::create_dir_all(&sub_folder)?;
+
+    let file1_path = source_folder.join("a.txt");
+    let file2_path = sub_folder.join("b.bin");
+
+    std::fs::write(&file1_path, b"small file A content")?;
+    std::fs::write(&file2_path, vec![0xCA, 0xFE, 0xBA, 0xBE])?;
+
+    let mtime1 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_650_000_000);
+    let mtime2 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+
+    let f1 = std::fs::File::open(&file1_path)?;
+    f1.set_modified(mtime1)?;
+    let f2 = std::fs::File::open(&file2_path)?;
+    f2.set_modified(mtime2)?;
+
+    let (addr, server_handle) = spawn_daemon(
+        make_config(dest_dir.path(), true),
+        Arc::new(AutoAccept),
+        Arc::new(TestObserver),
+    )
+    .await;
+
+    let mut client = Sender::connect(
+        addr,
+        SendType::Files(std::slice::from_ref(&source_folder)),
+        make_sender_info(),
+        CancellationToken::new(),
+        Uuid::new_v4(),
+    )
+    .await?
+    .unwrap();
+
+    client
+        .process_chunks(Arc::new(TestObserver {}), Arc::new(AtomicBool::new(false)))
+        .await?;
+
+    let dest_f1 = dest_dir.path().join("small_tree/a.txt");
+    let dest_f2 = dest_dir.path().join("small_tree/nested/b.bin");
+
+    assert_eq!(std::fs::read(&dest_f1)?, b"small file A content");
+    assert_eq!(std::fs::read(&dest_f2)?, vec![0xCA, 0xFE, 0xBA, 0xBE]);
+
+    let recv_mtime1 = std::fs::metadata(&dest_f1)?.modified()?;
+    let recv_mtime2 = std::fs::metadata(&dest_f2)?.modified()?;
+
+    assert_eq!(
+        recv_mtime1.duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
+        1_650_000_000
+    );
+    assert_eq!(
+        recv_mtime2.duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
+        1_700_000_000
+    );
+
+    server_handle.abort();
+    Ok(())
+}

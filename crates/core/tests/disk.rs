@@ -1,13 +1,12 @@
 use rand::Rng;
 use std::sync::Arc;
 use tempfile::tempdir;
-use tensou_core::disk::IgnitionPayload;
 use tensou_core::disk::ReceiveSession;
 use tensou_core::protocol::TransferObserver;
 use tensou_core::{
     CHUNK_SIZE,
     disk::{SendSession, TransferStaging},
-    protocol::{ChunkPacket, JobInstruction, Metadata},
+    protocol::{JobInstruction, Metadata},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -42,20 +41,16 @@ async fn test_full_local_transfer() -> anyhow::Result<()> {
     };
     let send_session = SendSession::new(metadata, &source_path)?;
 
-    let (tx, rx) = mpsc::channel::<ChunkPacket>(16);
     let instruction = JobInstruction::new(send_session.get_metadata());
-
     let staging = make_staging(dest_dir.path(), None);
 
-    let ignition = IgnitionPayload {
-        ins: instruction,
-        rx,
-        transfer_id: Uuid::new_v4(),
-        observer: Arc::new(TestObserver {}),
-        cancel_token: CancellationToken::new(),
+    let receive_session = ReceiveSession::new(
+        instruction,
+        Uuid::new_v4(),
+        Arc::new(TestObserver {}),
+        CancellationToken::new(),
         staging,
-    };
-    let receive_session = ReceiveSession::new(tx, ignition);
+    );
 
     for i in 0..send_session.get_total_chunks() {
         let (header, bytes) = send_session.get_chunk(i as u64).await?;
@@ -102,8 +97,6 @@ async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
         modified: 0,
     };
     let send_session = SendSession::new(metadata, &source_path)?;
-
-    let (tx, rx) = mpsc::channel::<ChunkPacket>(16);
     let instruction = JobInstruction::new(send_session.get_metadata());
     let cancel_token = CancellationToken::new();
 
@@ -113,15 +106,13 @@ async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
     let (obs_tx, mut obs_rx) = mpsc::channel(1);
     let observer = Arc::new(ChunkSignalObserver { tx: obs_tx });
 
-    let ignition = IgnitionPayload {
-        ins: instruction,
-        rx,
-        transfer_id: Uuid::new_v4(),
+    let receive_session = ReceiveSession::new(
+        instruction,
+        Uuid::new_v4(),
         observer,
-        cancel_token: cancel_token.clone(),
+        cancel_token.clone(),
         staging,
-    };
-    let receive_session = ReceiveSession::new(tx, ignition);
+    );
 
     let (header, bytes) = send_session.get_chunk(0).await?;
     receive_session.write_chunk(header, bytes).await?;
@@ -136,6 +127,57 @@ async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
         part_path.exists(),
         ".part file should be kept after cancellation"
     );
+
+    Ok(())
+}
+
+/// Verifies that small file payload writing sets correct content, nested directory structure, and mtime.
+#[tokio::test]
+async fn test_small_files_disk_writer_direct() -> anyhow::Result<()> {
+    use std::sync::mpsc;
+use std::time::SystemTime;
+    use tensou_core::disk::{SmallFilePayload, write_small_files_to_disk};
+
+    let dest_dir = tempdir()?;
+    let staging = make_staging(dest_dir.path(), None);
+
+    let (tx, rx) = mpsc::sync_channel::<SmallFilePayload>(10);
+    let expected_mtime_secs = 1_700_000_000u64;
+
+    let payload1 = SmallFilePayload {
+        relative_path: "sub/folder/file1.txt".to_string(),
+        modified: expected_mtime_secs,
+        data: b"hello small file 1".to_vec(),
+    };
+
+    let payload2 = SmallFilePayload {
+        relative_path: "file2.json".to_string(),
+        modified: expected_mtime_secs + 500,
+        data: b"{\"test\": true}".to_vec(),
+    };
+
+    tx.send(payload1)?;
+    tx.send(payload2)?;
+    drop(tx);
+
+    let observer = Arc::new(TestObserver {});
+    let transfer_id = Uuid::new_v4();
+
+    write_small_files_to_disk(rx, staging, observer, transfer_id)?;
+
+    let path1 = dest_dir.path().join("sub/folder/file1.txt");
+    let path2 = dest_dir.path().join("file2.json");
+
+    assert_eq!(std::fs::read(&path1)?, b"hello small file 1");
+    assert_eq!(std::fs::read(&path2)?, b"{\"test\": true}");
+
+    let meta1 = std::fs::metadata(&path1)?;
+    let mtime1 = meta1.modified()?.duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    assert_eq!(mtime1, expected_mtime_secs);
+
+    let meta2 = std::fs::metadata(&path2)?;
+    let mtime2 = meta2.modified()?.duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    assert_eq!(mtime2, expected_mtime_secs + 500);
 
     Ok(())
 }
