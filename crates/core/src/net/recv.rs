@@ -6,8 +6,8 @@ use crate::{
     disk::{ReceiveSession, SmallFilePayload, TransferStaging},
     net::is_connection_error,
     protocol::{
-        self, ChunkHeader, TransferConsentHandler, TransferError, TransferMode,
-        TransferObserver, TransferPayload, TransferRequest,
+        self, ChunkHeader, TransferConsentHandler, TransferError, TransferMode, TransferObserver,
+        TransferPayload, TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;

@@ -593,11 +593,15 @@ async fn test_small_files_mtime_and_integrity() -> anyhow::Result<()> {
     let recv_mtime2 = std::fs::metadata(&dest_f2)?.modified()?;
 
     assert_eq!(
-        recv_mtime1.duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
+        recv_mtime1
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs(),
         1_650_000_000
     );
     assert_eq!(
-        recv_mtime2.duration_since(SystemTime::UNIX_EPOCH)?.as_secs(),
+        recv_mtime2
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs(),
         1_700_000_000
     );
 

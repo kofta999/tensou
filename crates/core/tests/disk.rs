@@ -135,7 +135,7 @@ async fn test_cancel_preserves_partial_files() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_small_files_disk_writer_direct() -> anyhow::Result<()> {
     use std::sync::mpsc;
-use std::time::SystemTime;
+    use std::time::SystemTime;
     use tensou_core::disk::{SmallFilePayload, write_small_files_to_disk};
 
     let dest_dir = tempdir()?;
@@ -172,11 +172,17 @@ use std::time::SystemTime;
     assert_eq!(std::fs::read(&path2)?, b"{\"test\": true}");
 
     let meta1 = std::fs::metadata(&path1)?;
-    let mtime1 = meta1.modified()?.duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    let mtime1 = meta1
+        .modified()?
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_secs();
     assert_eq!(mtime1, expected_mtime_secs);
 
     let meta2 = std::fs::metadata(&path2)?;
-    let mtime2 = meta2.modified()?.duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    let mtime2 = meta2
+        .modified()?
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_secs();
     assert_eq!(mtime2, expected_mtime_secs + 500);
 
     Ok(())
