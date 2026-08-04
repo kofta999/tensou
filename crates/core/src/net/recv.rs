@@ -216,7 +216,9 @@ impl ReceiverDaemon {
                                             Err(e) => {
                                                 log::error!("Transfer chunk processing error: {e}");
                                                 let classification = match tokio::time::timeout(
-                                                    std::time::Duration::from_millis(200),
+                                                    std::time::Duration::from_millis(
+                                                        crate::CONNECTION_CLOSED_CHECK_TIMEOUT_MS,
+                                                    ),
                                                     connection.closed(),
                                                 )
                                                 .await
@@ -516,9 +518,11 @@ impl Receiver {
             Err(_) => return Ok(()),
         };
 
-        let mut reader = tokio::io::BufReader::with_capacity(1_048_576, recv);
+        let mut reader =
+            tokio::io::BufReader::with_capacity(crate::SMALL_FILES_NETWORK_BUFFER_SIZE, recv);
 
-        let (tx, rx) = std::sync::mpsc::sync_channel::<SmallFilePayload>(64);
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel::<SmallFilePayload>(crate::SMALL_FILES_CHANNEL_CAPACITY);
         let staging = self.staging.clone();
         let observer_clone = observer.clone();
         let transfer_id = self.transfer_id;
