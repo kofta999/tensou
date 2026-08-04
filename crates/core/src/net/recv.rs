@@ -6,7 +6,7 @@ use crate::{
     disk::{ReceiveSession, SmallFilePayload, TransferStaging},
     net::is_connection_error,
     protocol::{
-        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferError, TransferMode,
+        self, ChunkHeader, TransferConsentHandler, TransferError, TransferMode,
         TransferObserver, TransferPayload, TransferRequest,
     },
 };
