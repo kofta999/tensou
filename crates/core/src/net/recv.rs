@@ -377,49 +377,7 @@ impl PendingTransfer {
                     })
                     .await??;
 
-                // Pre-create all unique destination and staging directories
-                // before any data flows. This collapses the per-file create_dir_all
-                // calls (each causing ~22 statx syscalls) into a single upfront pass.
-                let staging_clone = staging.clone();
-                let ins_ref = &instructions;
-                let unique_dirs: HashSet<std::path::PathBuf> = ins_ref
-                    .iter()
-                    .flat_map(|ins| {
-                        let is_small = ins.metadata.size <= ins.metadata.chunk_size;
-                        let mut dirs = Vec::with_capacity(2);
-                        if is_small {
-                            if let Some(p) = staging_clone
-                                .final_path(&ins.metadata.relative_path)
-                                .parent()
-                            {
-                                dirs.push(p.to_path_buf());
-                            }
-                        } else {
-                            if let Some(p) = staging_clone
-                                .part_path(&ins.metadata.relative_path)
-                                .parent()
-                            {
-                                dirs.push(p.to_path_buf());
-                            }
-                            if let Some(p) = staging_clone
-                                .final_path(&ins.metadata.relative_path)
-                                .parent()
-                            {
-                                dirs.push(p.to_path_buf());
-                            }
-                        }
-                        dirs
-                    })
-                    .collect();
-                let staging_clone2 = staging.clone();
-                tokio::task::spawn_blocking(move || {
-                    staging_clone2.prepare()?;
-                    for dir in unique_dirs {
-                        std::fs::create_dir_all(dir)?;
-                    }
-                    std::io::Result::Ok(())
-                })
-                .await??;
+                staging.clone().prepare_destination(&instructions).await?;
 
                 let (total_remaining_size, total_full_size, large_file_states) = instructions
                     .iter()
