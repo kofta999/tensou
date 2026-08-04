@@ -5,6 +5,7 @@ use crate::{
         State, TransferObserver,
     },
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     fs,
     sync::{Arc, Mutex},
@@ -18,62 +19,64 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub struct DiskWriter {
-    metadata: Metadata,
-    state: State,
+pub struct SmallFilePayload {
+    pub relative_path: String,
+    pub modified: u64,
+    pub data: Vec<u8>,
+}
+
+pub fn write_small_files_to_disk(
+    rx: std::sync::mpsc::Receiver<SmallFilePayload>,
     staging: Arc<TransferStaging>,
-    is_resumed: bool,
-    file: Option<File>,
+    observer: Arc<dyn TransferObserver>,
     transfer_id: Uuid,
-    rx: ChunkPacketReceiver,
+) -> anyhow::Result<()> {
+    while let Ok(payload) = rx.recv() {
+        let data_len = payload.data.len() as u64;
+        let final_path = staging.final_path(&payload.relative_path);
+        staging.create_file_destination_dir(&payload.relative_path)?;
+        std::fs::write(&final_path, &payload.data)?;
+
+        if let Ok(f) = std::fs::File::open(&final_path) {
+            let _ = f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(payload.modified));
+        }
+
+        observer.on_chunk_transferred(transfer_id, data_len);
+    }
+    Ok(())
+}
+
+struct ReceiveSessionInner {
+    metadata: Metadata,
+    state: Mutex<State>,
+    staging: Arc<TransferStaging>,
+    is_resumed: AtomicBool,
+    file: tokio::sync::Mutex<Option<File>>,
+    transfer_id: Uuid,
     observer: Arc<dyn TransferObserver>,
     cancel_token: CancellationToken,
 }
 
-impl DiskWriter {
-    pub fn new(
-        IgnitionPayload {
-            rx,
-            ins,
-            transfer_id,
-            observer,
-            cancel_token,
-            staging,
-        }: IgnitionPayload,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            state: ins.state,
-            metadata: ins.metadata,
-            is_resumed: ins.is_resumed,
-            staging,
-            file: None,
-            transfer_id,
-            rx,
-            observer,
-            cancel_token,
-        })
-    }
-
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+impl ReceiveSessionInner {
+    async fn run_writer_loop(&self, mut rx: ChunkPacketReceiver) -> anyhow::Result<()> {
         let mut chunks_since_save: u32 = 0;
         const SAVE_INTERVAL: u32 = 16;
 
         loop {
             tokio::select! {
-                _ = self.cancel_token.cancelled() =>  {
-                    if !self.is_complete() && self.is_resumed {
+                _ = self.cancel_token.cancelled() => {
+                    if !self.is_complete() && self.is_resumed.load(Ordering::Relaxed) {
                         self.save_state().await?;
                     }
-                    return Ok(())
+                    return Ok(());
                 }
 
-                maybe_packet = self.rx.recv() => {
+                maybe_packet = rx.recv() => {
                     match maybe_packet {
                         Some(packet) => {
                             let size = packet.bytes.len() as u64;
 
-                            // Cancel transfer on chunk hash failure (rare to happen, user can resume later)
-                            if !self.write_chunk(packet).await? {
+                            if !self.write_chunk_internal(&packet).await? {
                                 self.cancel_token.cancel();
                                 anyhow::bail!("Chunk integrity check failed — retry the transfer");
                             } else {
@@ -83,7 +86,7 @@ impl DiskWriter {
                                     .on_chunk_transferred(self.transfer_id, size);
 
                                 if self.is_complete() {
-                                    self.commit()?;
+                                    self.commit().await?;
                                     break;
                                 }
 
@@ -110,15 +113,16 @@ impl DiskWriter {
         if self.metadata.size <= self.metadata.chunk_size {
             return Ok(());
         }
+        let raw_slice = self.state.lock().unwrap().0.as_raw_slice().to_vec();
         tokio::fs::write(
             &self.staging.state_path(&self.metadata.relative_path),
-            self.state.0.as_raw_slice(),
+            &raw_slice,
         )
         .await?;
         Ok(())
     }
 
-    pub async fn write_chunk(&mut self, packet: ChunkPacket) -> anyhow::Result<bool> {
+    async fn write_chunk_internal(&self, packet: &ChunkPacket) -> anyhow::Result<bool> {
         if packet.header.hash == ChunkHeader::hash_chunk(&packet.bytes) {
             let offset = packet.header.index * self.metadata.chunk_size;
             let part_path = self.staging.part_path(&self.metadata.relative_path);
@@ -127,7 +131,9 @@ impl DiskWriter {
 
             let write_path = if is_small { &final_path } else { &part_path };
 
-            if self.file.is_none() {
+            let mut file_guard = self.file.lock().await;
+
+            if file_guard.is_none() {
                 if is_small {
                     self.staging
                         .create_file_destination_dir(&self.metadata.relative_path)?;
@@ -135,10 +141,8 @@ impl DiskWriter {
                     self.staging
                         .create_file_staging_dir(&self.metadata.relative_path)?;
                 }
-            }
 
-            if self.file.is_none() {
-                let file = tokio::fs::OpenOptions::new()
+                let f = tokio::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
                     .create(true)
@@ -146,22 +150,26 @@ impl DiskWriter {
                     .open(write_path)
                     .await?;
 
-                if !self.is_resumed {
+                if !self.is_resumed.load(Ordering::Relaxed) {
                     if !is_small {
-                        file.set_len(self.metadata.size).await?;
+                        f.set_len(self.metadata.size).await?;
                     }
-                    self.is_resumed = true;
+                    self.is_resumed.store(true, Ordering::Relaxed);
                 }
 
-                self.file = Some(file);
+                *file_guard = Some(f);
             }
 
-            let file_fd = self.file.as_mut().unwrap();
+            let file_fd = file_guard.as_mut().unwrap();
 
             file_fd.seek(std::io::SeekFrom::Start(offset)).await?;
             file_fd.write_all(&packet.bytes).await?;
 
-            self.state.0.set(packet.header.index as usize, true);
+            self.state
+                .lock()
+                .unwrap()
+                .0
+                .set(packet.header.index as usize, true);
 
             Ok(true)
         } else {
@@ -170,11 +178,11 @@ impl DiskWriter {
     }
 
     fn is_complete(&self) -> bool {
-        self.state.0.all()
+        self.state.lock().unwrap().0.all()
     }
 
-    fn commit(&mut self) -> anyhow::Result<()> {
-        self.file = None;
+    async fn commit(&self) -> anyhow::Result<()> {
+        *self.file.lock().await = None;
 
         let state_path = self.staging.state_path(&self.metadata.relative_path);
         if state_path.exists() {
@@ -212,45 +220,53 @@ impl DiskWriter {
     }
 }
 
-pub struct IgnitionPayload {
-    pub rx: ChunkPacketReceiver,
-    pub ins: JobInstruction,
-    pub transfer_id: Uuid,
-    pub observer: Arc<dyn TransferObserver>,
-    pub staging: Arc<TransferStaging>,
-    pub cancel_token: CancellationToken,
-}
-
 pub struct ReceiveSession {
     tx: ChunkPacketSender,
-    ignition: Mutex<Option<IgnitionPayload>>,
+    rx: Mutex<Option<ChunkPacketReceiver>>,
+    inner: Arc<ReceiveSessionInner>,
     pub(crate) writer_handle: Mutex<Option<task::JoinHandle<anyhow::Result<()>>>>,
 }
 
 impl ReceiveSession {
-    pub fn new(tx: ChunkPacketSender, ignition: IgnitionPayload) -> Self {
+    pub fn new(
+        ins: JobInstruction,
+        transfer_id: Uuid,
+        observer: Arc<dyn TransferObserver>,
+        cancel_token: CancellationToken,
+        staging: Arc<TransferStaging>,
+    ) -> Self {
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<ChunkPacket>(crate::MAX_CONCURRENT_STREAMS.into());
+        let inner = Arc::new(ReceiveSessionInner {
+            metadata: ins.metadata,
+            state: Mutex::new(ins.state),
+            staging,
+            is_resumed: AtomicBool::new(ins.is_resumed),
+            file: tokio::sync::Mutex::new(None),
+            transfer_id,
+            observer,
+            cancel_token,
+        });
+
         Self {
             tx,
-            ignition: Mutex::new(Some(ignition)),
+            rx: Mutex::new(Some(rx)),
+            inner,
             writer_handle: Mutex::new(None),
         }
     }
 
     pub async fn write_chunk(&self, header: ChunkHeader, bytes: Vec<u8>) -> anyhow::Result<()> {
-        if let Some(ign) = self.ignition.lock().unwrap().take() {
-            let handle = tokio::spawn(async move {
-                let mut writer = DiskWriter::new(ign)?;
-                writer.run().await
-            });
-
+        let maybe_rx = self.rx.lock().unwrap().take();
+        if let Some(rx) = maybe_rx {
+            let inner = self.inner.clone();
+            let handle = tokio::spawn(async move { inner.run_writer_loop(rx).await });
             *self.writer_handle.lock().unwrap() = Some(handle);
         }
 
-        // We've resumes, so it's no problem if we couldn't send a packet once
         if self.tx.send(ChunkPacket { header, bytes }).await.is_err() {
-            return anyhow::Ok(());
-        };
-
+            return Ok(());
+        }
         Ok(())
     }
 

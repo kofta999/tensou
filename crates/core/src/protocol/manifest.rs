@@ -1,20 +1,20 @@
 use crate::disk::{SendSession, TransferStaging};
-use crate::protocol::{JobInstruction, Manifest};
+use crate::protocol::{JobInstruction, Manifest, State};
 use crate::protocol::{Metadata, TransferMode};
 use crate::util::{generate_job_name, is_safe_relative_path};
-use crate::{CHUNK_SIZE, FileId};
+use crate::{CHUNK_SIZE, FileId, SMALL_FILE_THRESHOLD, STAGING_DIR_NAME};
 use anyhow::bail;
+use bitvec::order::Lsb0;
+use bitvec::vec::BitVec;
 use std::path::PathBuf;
 use std::{collections::HashMap, path::Path, sync::Arc};
 use walkdir::WalkDir;
 
-pub fn parse(
-    manifest: Manifest,
+fn get_unique_paths(
+    manifest: &Manifest,
     downloads_dir: &Path,
     transfer_mode: TransferMode,
-) -> anyhow::Result<(Vec<JobInstruction>, Arc<TransferStaging>)> {
-    use crate::STAGING_DIR_NAME;
-    let mut instructions = Vec::new();
+) -> HashMap<String, String> {
     let mut unique_mappings = HashMap::new(); // Map: Original Target -> Unique Target
 
     for target in &manifest.top_level_targets {
@@ -42,15 +42,21 @@ pub fn parse(
             .into_owned();
         unique_mappings.insert(target.clone(), unique_name);
     }
+    unique_mappings
+}
 
-    // Determine top_level_prefix
-    let top_level_prefix = if manifest.top_level_targets.len() == 1 {
+pub fn get_top_level_prefix<'a>(
+    manifest: &Manifest,
+    unique_mappings: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    if manifest.top_level_targets.len() == 1 {
         let target = &manifest.top_level_targets[0];
         let unique_target = unique_mappings.get(target).unwrap();
         let prefix = format!("{}/", target);
         if manifest
-            .files
+            .large_files
             .iter()
+            .chain(manifest.small_files.iter())
             .any(|f| f.relative_path.starts_with(&prefix))
         {
             Some(unique_target.as_str())
@@ -59,29 +65,44 @@ pub fn parse(
         }
     } else {
         None
-    };
+    }
+}
+
+fn rewrite_relative_path(metadata: &mut Metadata, unique_mappings: &HashMap<String, String>) {
+    for (original_target, unique_target) in unique_mappings {
+        if metadata.relative_path == *original_target {
+            // Flat file match: rewrite directly
+            metadata.relative_path = unique_target.clone();
+            break;
+        } else if metadata
+            .relative_path
+            .starts_with(&format!("{}/", original_target))
+        {
+            // Nested folder file match: replace parent prefix
+            let subpath = &metadata.relative_path[original_target.len() + 1..];
+            metadata.relative_path = format!("{}/{}", unique_target, subpath);
+            break;
+        }
+    }
+}
+
+pub fn parse(
+    manifest: Manifest,
+    downloads_dir: &Path,
+    transfer_mode: TransferMode,
+) -> anyhow::Result<(Vec<JobInstruction>, Arc<TransferStaging>, State)> {
+    let mut instructions = Vec::new();
+    let unique_mappings = get_unique_paths(&manifest, downloads_dir, transfer_mode);
+    let top_level_prefix = get_top_level_prefix(&manifest, &unique_mappings);
+    let mut small_files_state = BitVec::<u8, Lsb0>::with_capacity(manifest.small_files.len());
 
     let staging = Arc::new(TransferStaging::new(
         downloads_dir.to_path_buf(),
         top_level_prefix,
     ));
 
-    for mut metadata in manifest.files.into_iter() {
-        for (original_target, unique_target) in &unique_mappings {
-            if metadata.relative_path == *original_target {
-                // Flat file match: rewrite directly
-                metadata.relative_path = unique_target.clone();
-                break;
-            } else if metadata
-                .relative_path
-                .starts_with(&format!("{}/", original_target))
-            {
-                // Nested folder file match: replace parent prefix
-                let subpath = &metadata.relative_path[original_target.len() + 1..];
-                metadata.relative_path = format!("{}/{}", unique_target, subpath);
-                break;
-            }
-        }
+    for mut metadata in manifest.small_files.into_iter() {
+        rewrite_relative_path(&mut metadata, &unique_mappings);
 
         if !is_safe_relative_path(Path::new(&metadata.relative_path)) {
             bail!("Invalid path")
@@ -89,17 +110,50 @@ pub fn parse(
 
         let final_path = &staging.final_path(&metadata.relative_path);
 
-        log::info!(
-            "Parsing file '{:?}' with transfer_mode {:?}",
-            metadata.relative_path,
-            transfer_mode
-        );
+        let should_skip = match transfer_mode {
+            TransferMode::Unique => final_path.exists(),
+            TransferMode::Overwrite => false,
+            TransferMode::Sync => std::fs::metadata(final_path).is_ok_and(|local_meta| {
+                let local_mtime = local_meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                local_meta.len() == metadata.size && local_mtime == metadata.modified
+            }),
+        };
+
+        if metadata.size == 0 && !should_skip {
+            staging.create_file_destination_dir(&metadata.relative_path)?;
+            std::fs::File::create(final_path)?;
+            small_files_state.push(true);
+            continue;
+        }
+
+        small_files_state.push(should_skip);
+    }
+
+    for mut metadata in manifest.large_files.into_iter() {
+        rewrite_relative_path(&mut metadata, &unique_mappings);
+
+        if !is_safe_relative_path(Path::new(&metadata.relative_path)) {
+            bail!("Invalid path")
+        }
+
+        let final_path = &staging.final_path(&metadata.relative_path);
+
+        // log::info!(
+        //     "Parsing file '{:?}' with transfer_mode {:?}",
+        //     metadata.relative_path,
+        //     transfer_mode
+        // );
 
         match transfer_mode {
             TransferMode::Unique => {
                 let mut instruction = JobInstruction::new(metadata);
                 let state_path = &staging.state_path(&instruction.metadata.relative_path);
-                log::debug!("Unique mode: loading state from disk for {:?}", final_path);
+                // log::debug!("Unique mode: loading state from disk for {:?}", final_path);
                 instruction.load_state_from_disk(state_path, final_path, false)?;
 
                 // If the file is already complete (size 0) and does not exist at final destination,
@@ -118,10 +172,10 @@ pub fn parse(
             TransferMode::Overwrite => {
                 let mut instruction = JobInstruction::new(metadata);
                 let state_path = &staging.state_path(&instruction.metadata.relative_path);
-                log::debug!(
-                    "Overwrite mode: loading state from disk (overwrite=true) for {:?}",
-                    final_path
-                );
+                // log::debug!(
+                //     "Overwrite mode: loading state from disk (overwrite=true) for {:?}",
+                //     final_path
+                // );
                 instruction.load_state_from_disk(state_path, final_path, true)?;
                 if instruction.state.0.all() {
                     log::info!(
@@ -192,12 +246,17 @@ pub fn parse(
         }
     }
 
-    Ok((instructions, staging))
+    Ok((instructions, staging, State(small_files_state)))
 }
 
-pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc<SendSession>>)> {
-    let mut files = Vec::new();
+pub type SendSessionMap = HashMap<FileId, Arc<SendSession>>;
+pub type SmallFileMap = HashMap<FileId, PathBuf>;
+
+pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, SendSessionMap, SmallFileMap)> {
+    let mut large_files = Vec::new();
+    let mut small_files = Vec::new();
     let mut sessions = HashMap::new();
+    let mut small_files_paths = HashMap::new();
     let mut file_id_counter = 0;
     let mut top_level_targets = Vec::new();
 
@@ -232,12 +291,18 @@ pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc
                     .as_secs(),
             };
 
-            sessions.insert(
-                file_id_counter,
-                Arc::new(SendSession::new(metadata.clone(), entry.path())?),
-            );
+            if metadata.size <= SMALL_FILE_THRESHOLD {
+                small_files_paths.insert(file_id_counter, entry.path().to_path_buf());
+                small_files.push(metadata);
+            } else {
+                sessions.insert(
+                    file_id_counter,
+                    Arc::new(SendSession::new(metadata.clone(), entry.path())?),
+                );
 
-            files.push(metadata);
+                large_files.push(metadata);
+            }
+
             file_id_counter += 1;
         }
     }
@@ -248,8 +313,10 @@ pub fn build(paths: &[PathBuf]) -> anyhow::Result<(Manifest, HashMap<FileId, Arc
         Manifest {
             job_name,
             top_level_targets,
-            files,
+            large_files,
+            small_files,
         },
         sessions,
+        small_files_paths,
     ))
 }

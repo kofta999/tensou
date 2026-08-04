@@ -18,14 +18,14 @@ pub struct TransferRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransferPayload {
-    File(Manifest),
+    Files(Manifest),
     Text(String),
 }
 
 impl TransferPayload {
     pub fn job_name(&self) -> &str {
         match self {
-            TransferPayload::File(manifest) => &manifest.job_name,
+            TransferPayload::Files(manifest) => &manifest.job_name,
             TransferPayload::Text { .. } => "Clipboard Text",
         }
     }
@@ -49,7 +49,8 @@ pub struct Manifest {
     /// The top-level files or folders selected by the sender.
     /// E.g., `["document.pdf", "MyPhotos"]` or `["Photos", "Videos"]`
     pub top_level_targets: Vec<String>,
-    pub files: Vec<Metadata>,
+    pub large_files: Vec<Metadata>,
+    pub small_files: Vec<Metadata>,
 }
 
 impl Manifest {
@@ -58,7 +59,7 @@ impl Manifest {
             let target = &self.top_level_targets[0];
             let prefix = format!("{}/", target);
             if self
-                .files
+                .large_files
                 .iter()
                 .any(|f| f.relative_path.starts_with(&prefix))
             {

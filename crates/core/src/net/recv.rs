@@ -3,11 +3,11 @@ use crate::{
     QUIC_RECEIVE_WINDOW, QUIC_STREAM_RECEIVE_WINDOW, REQUEST_READ_TIMEOUT_SECS,
     config::Config,
     discovery,
-    disk::{IgnitionPayload, ReceiveSession, TransferStaging},
+    disk::{ReceiveSession, SmallFilePayload, TransferStaging},
     net::is_connection_error,
     protocol::{
-        self, ChunkHeader, ChunkPacket, TransferConsentHandler, TransferError, TransferMode,
-        TransferObserver, TransferPayload, TransferRequest,
+        self, ChunkHeader, TransferConsentHandler, TransferError, TransferMode, TransferObserver,
+        TransferPayload, TransferRequest,
     },
 };
 use mdns_sd::ServiceDaemon;
@@ -207,7 +207,7 @@ impl ReceiverDaemon {
                                         observer_clone.on_transfer_failed(transfer_id, &TransferError::Cancelled);
                                     }
 
-                                    res = receiver.process_chunks(work_cancel_token.clone()) => {
+                                    res = receiver.process_chunks(work_cancel_token.clone(), &observer_clone) => {
                                         match res {
                                             Ok(_) => {
                                                 observer_clone.on_transfer_complete(transfer_id);
@@ -216,7 +216,9 @@ impl ReceiverDaemon {
                                             Err(e) => {
                                                 log::error!("Transfer chunk processing error: {e}");
                                                 let classification = match tokio::time::timeout(
-                                                    std::time::Duration::from_millis(200),
+                                                    std::time::Duration::from_millis(
+                                                        crate::CONNECTION_CLOSED_CHECK_TIMEOUT_MS,
+                                                    ),
                                                     connection.closed(),
                                                 )
                                                 .await
@@ -367,29 +369,28 @@ impl PendingTransfer {
         mode: TransferMode,
     ) -> anyhow::Result<AcceptResult> {
         match self.request.payload {
-            TransferPayload::File(manifest) => {
+            TransferPayload::Files(manifest) => {
                 let job_name = manifest.job_name.clone();
 
                 let target_dir_clone = target_dir.to_path_buf();
-                let (instructions, staging) = tokio::task::spawn_blocking(move || {
-                    protocol::manifest::parse(manifest, &target_dir_clone, mode)
-                })
-                .await??;
+                let (instructions, staging, small_files_state) =
+                    tokio::task::spawn_blocking(move || {
+                        protocol::manifest::parse(manifest, &target_dir_clone, mode)
+                    })
+                    .await??;
 
-                let staging_clone = staging.clone();
-                tokio::task::spawn_blocking(move || staging_clone.prepare()).await??;
+                staging.clone().prepare_destination(&instructions).await?;
 
-                let (total_remaining_size, total_full_size, states) = instructions.iter().fold(
-                    (0, 0, Vec::new()),
-                    |(remaining, full, mut states), ins| {
+                let (total_remaining_size, total_full_size, large_file_states) = instructions
+                    .iter()
+                    .fold((0, 0, Vec::new()), |(remaining, full, mut states), ins| {
                         states.push(&ins.state);
                         (
                             remaining + ins.remaining_bytes,
                             full + ins.metadata.size,
                             states,
                         )
-                    },
-                );
+                    });
 
                 if !Self::is_space_available(total_remaining_size, target_dir).await {
                     let _ = staging.cleanup();
@@ -401,7 +402,7 @@ impl PendingTransfer {
 
                 self.send_stream.write_u8(1).await?;
 
-                let state_buf = rmp_serde::to_vec(&states)?;
+                let state_buf = rmp_serde::to_vec(&(large_file_states, small_files_state))?;
 
                 self.send_stream.write_all(&state_buf).await?;
                 self.send_stream.finish()?;
@@ -409,20 +410,15 @@ impl PendingTransfer {
                 let mut sessions = HashMap::new();
 
                 for ins in instructions.into_iter() {
-                    let (tx, rx) =
-                        tokio::sync::mpsc::channel::<ChunkPacket>(MAX_CONCURRENT_STREAMS.into());
                     let file_id = ins.metadata.file_id;
-
-                    let payload = IgnitionPayload {
+                    let session = ReceiveSession::new(
                         ins,
-                        observer: observer.clone(),
-                        rx,
                         transfer_id,
-                        cancel_token: cancel_token.clone(),
-                        staging: staging.clone(),
-                    };
-
-                    sessions.insert(file_id, Arc::new(ReceiveSession::new(tx, payload)));
+                        observer.clone(),
+                        cancel_token.clone(),
+                        staging.clone(),
+                    );
+                    sessions.insert(file_id, Arc::new(session));
                 }
 
                 Ok(AcceptResult::File(Receiver {
@@ -430,6 +426,7 @@ impl PendingTransfer {
                     total_size: total_remaining_size,
                     total_full_size,
                     job_name,
+                    transfer_id,
                     sessions: Arc::new(sessions),
                     staging: staging.clone(),
                 }))
@@ -461,12 +458,105 @@ pub struct Receiver {
     pub(super) total_size: u64,
     pub(super) total_full_size: u64,
     pub(super) job_name: String,
+    pub(super) transfer_id: Uuid,
     pub(super) sessions: Arc<HashMap<FileId, Arc<ReceiveSession>>>,
     pub(super) staging: Arc<TransferStaging>,
 }
 
 impl Receiver {
-    pub async fn process_chunks(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
+    async fn read_small_files_from_stream<R: tokio::io::AsyncRead + Unpin>(
+        reader: &mut R,
+        file_count: u64,
+        tx: std::sync::mpsc::SyncSender<SmallFilePayload>,
+        cancel_token: CancellationToken,
+    ) -> anyhow::Result<()> {
+        for _ in 0..file_count {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return anyhow::Ok(());
+                }
+
+                res = async {
+                    let path_len = reader.read_u64().await? as usize;
+                    let mut path_buf = vec![0u8; path_len];
+                    reader.read_exact(&mut path_buf).await?;
+                    let relative_path = String::from_utf8(path_buf)?;
+
+                    let modified = reader.read_u64().await?;
+
+                    let data_len = reader.read_u64().await? as usize;
+                    let mut data = vec![0u8; data_len];
+                    reader.read_exact(&mut data).await?;
+
+                    if tx
+                        .send(SmallFilePayload {
+                            relative_path,
+                            modified,
+                            data,
+                        })
+                        .is_err()
+                    {
+                        anyhow::bail!("Disk writer worker disconnected prematurely");
+                    }
+
+                    anyhow::Ok(())
+                } => res?
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_small_files(
+        &self,
+        cancel_token: CancellationToken,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        let mut recv = self.connection.accept_uni().await?;
+
+        let file_count = match recv.read_u64().await {
+            Ok(count) => count,
+            Err(_) => return Ok(()),
+        };
+
+        let mut reader =
+            tokio::io::BufReader::with_capacity(crate::SMALL_FILES_NETWORK_BUFFER_SIZE, recv);
+
+        let (tx, rx) =
+            std::sync::mpsc::sync_channel::<SmallFilePayload>(crate::SMALL_FILES_CHANNEL_CAPACITY);
+        let staging = self.staging.clone();
+        let observer_clone = observer.clone();
+        let transfer_id = self.transfer_id;
+
+        let disk_handle = std::thread::spawn(move || {
+            crate::disk::write_small_files_to_disk(rx, staging, observer_clone, transfer_id)
+        });
+
+        let net_res =
+            Self::read_small_files_from_stream(&mut reader, file_count, tx.clone(), cancel_token)
+                .await;
+        drop(tx);
+
+        let disk_res = disk_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("Disk writer thread panicked"))?;
+
+        net_res?;
+        disk_res?;
+
+        Ok(())
+    }
+
+    pub async fn process_chunks(
+        self,
+        cancel_token: CancellationToken,
+        observer: &Arc<dyn TransferObserver>,
+    ) -> anyhow::Result<()> {
+        self.process_small_files(cancel_token.clone(), observer)
+            .await?;
+        self.process_large_files(cancel_token).await
+    }
+
+    async fn process_large_files(self, cancel_token: CancellationToken) -> anyhow::Result<()> {
         log::info!("Receiver: starting process_chunks");
         let mut join_set = tokio::task::JoinSet::new();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS.into()));

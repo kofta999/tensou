@@ -270,13 +270,12 @@ mod tests {
         let file = dir.path().join("hello.txt");
         std::fs::write(&file, b"hello world").unwrap();
 
-        let (manifest, sessions) = manifest::build(&[file]).unwrap();
+        let (manifest, _, _) = manifest::build(&[file]).unwrap();
 
         assert_eq!(manifest.job_name, "hello.txt");
-        assert_eq!(manifest.files.len(), 1);
-        assert_eq!(manifest.files[0].relative_path, "hello.txt");
-        assert_eq!(manifest.files[0].size, 11);
-        assert_eq!(sessions.len(), 1);
+        assert_eq!(manifest.small_files.len(), 1);
+        assert_eq!(manifest.small_files[0].relative_path, "hello.txt");
+        assert_eq!(manifest.small_files[0].size, 11);
     }
 
     /// Verifies that ManifestManager::build preserves relative directory layouts for folder transfers.
@@ -287,17 +286,16 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), b"aaa").unwrap();
         std::fs::write(dir.path().join("sub/b.txt"), b"bbbbb").unwrap();
 
-        let (manifest, sessions) = manifest::build(&[dir.path().to_path_buf()]).unwrap();
+        let (manifest, _, _) = manifest::build(&[dir.path().to_path_buf()]).unwrap();
 
-        assert_eq!(manifest.files.len(), 2);
-        assert_eq!(sessions.len(), 2);
+        assert_eq!(manifest.small_files.len(), 2);
 
         let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
         let expected_a = format!("{}/a.txt", dir_name);
         let expected_b = format!("{}/sub/b.txt", dir_name);
 
         let paths: Vec<&str> = manifest
-            .files
+            .small_files
             .iter()
             .map(|m| m.relative_path.as_str())
             .collect();
@@ -313,13 +311,14 @@ mod tests {
         let manifest = Manifest {
             job_name: "job".into(),
             top_level_targets: vec![],
-            files: vec![Metadata {
+            large_files: vec![Metadata {
                 file_id: 0,
                 relative_path: "../escape.txt".into(),
                 size: 4,
                 chunk_size: 4,
                 modified: 0,
             }],
+            small_files: vec![],
         };
 
         let result = manifest::parse(manifest, staging_dir.path(), TransferMode::Unique);
@@ -344,7 +343,7 @@ mod tests {
         let manifest = Manifest {
             job_name: "multi_transfer".into(),
             top_level_targets: vec!["a.txt".into(), "MyPhotos".into()],
-            files: vec![
+            large_files: vec![
                 Metadata {
                     file_id: 0,
                     relative_path: "a.txt".into(),
@@ -360,9 +359,10 @@ mod tests {
                     modified: 0,
                 },
             ],
+            small_files: vec![],
         };
 
-        let (instructions, _staging) =
+        let (instructions, _staging, _) =
             manifest::parse(manifest, downloads_dir.path(), TransferMode::Unique).unwrap();
         assert_eq!(instructions.len(), 2);
 

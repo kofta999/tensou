@@ -1,5 +1,9 @@
-use crate::STAGING_DIR_NAME;
-use std::path::{Path, PathBuf};
+use crate::{STAGING_DIR_NAME, protocol::JobInstruction};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub struct TransferStaging {
     /// Final user-visible destination directory (e.g. `Downloads/MyTransfer/`)
@@ -89,6 +93,46 @@ impl TransferStaging {
                 let _ = std::fs::remove_dir(parent);
             }
         }
+        Ok(())
+    }
+
+    /// Pre-create all unique destination and staging directories
+    /// before any data flows. This collapses the per-file create_dir_all
+    /// calls (each causing ~22 statx syscalls) into a single upfront pass.
+    pub async fn prepare_destination(
+        self: Arc<Self>,
+        instructions: &[JobInstruction],
+    ) -> anyhow::Result<()> {
+        let unique_dirs: HashSet<std::path::PathBuf> = instructions
+            .iter()
+            .flat_map(|ins| {
+                let is_small = ins.metadata.size <= ins.metadata.chunk_size;
+                let mut dirs = Vec::with_capacity(2);
+                if is_small {
+                    if let Some(p) = self.final_path(&ins.metadata.relative_path).parent() {
+                        dirs.push(p.to_path_buf());
+                    }
+                } else {
+                    if let Some(p) = self.part_path(&ins.metadata.relative_path).parent() {
+                        dirs.push(p.to_path_buf());
+                    }
+                    if let Some(p) = self.final_path(&ins.metadata.relative_path).parent() {
+                        dirs.push(p.to_path_buf());
+                    }
+                }
+                dirs
+            })
+            .collect();
+        let staging_clone = self.clone();
+        tokio::task::spawn_blocking(move || {
+            staging_clone.prepare()?;
+            for dir in unique_dirs {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::io::Result::Ok(())
+        })
+        .await??;
+
         Ok(())
     }
 }

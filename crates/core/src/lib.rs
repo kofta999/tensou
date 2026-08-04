@@ -1,11 +1,16 @@
 pub const SERVER_PORT: u16 = 6967;
 pub const CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 pub const MAX_REQUEST_SIZE: u64 = 64 * 1024 * 1024;
-pub const MAX_CONCURRENT_STREAMS: u16 = 8;
+pub const MAX_CONCURRENT_STREAMS: u16 = 32;
 pub const SERVICE_TYPE: &str = "_tensou._udp.local.";
 pub const STAGING_DIR_NAME: &str = ".tensou";
 pub const QUIC_ESTABLISH_CONN_TIMEOUT_SECS: u64 = 5;
 pub const REQUEST_READ_TIMEOUT_SECS: u64 = 10;
+pub const SMALL_FILE_THRESHOLD: u64 = 64 * 1024;
+pub const SMALL_FILES_CHANNEL_CAPACITY: usize = 64;
+pub const SMALL_FILES_NETWORK_BUFFER_SIZE: usize = 1024 * 1024; // 1 MB
+pub const SMALL_FILES_MAX_CONCURRENT_READS: usize = 16;
+pub const CONNECTION_CLOSED_CHECK_TIMEOUT_MS: u64 = 200;
 
 // According to the robot:
 // This tells the sender "you can have up to 8 MB of unacknowledged data in flight." On a LAN with ~0.1ms RTT, you only need:

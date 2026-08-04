@@ -106,8 +106,15 @@ impl ConnectionManager {
             .with_custom_certificate_verifier(SkipServerVerification::new())
             .with_no_client_auth();
 
-        Ok(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
-            rustls_config,
-        )?)))
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.max_concurrent_uni_streams(crate::MAX_CONCURRENT_STREAMS.into());
+        transport_config.stream_receive_window(crate::QUIC_STREAM_RECEIVE_WINDOW.into());
+        transport_config.receive_window(crate::QUIC_RECEIVE_WINDOW.into());
+
+        let mut client_cfg =
+            ClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config)?));
+        client_cfg.transport_config(Arc::new(transport_config));
+
+        Ok(client_cfg)
     }
 }
