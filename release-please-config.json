@@ -4,12 +4,7 @@
   "packages": {
     ".": {
       "release-type": "rust",
-      "package-name": "tensou",
-      "extra-files": [
-        "crates/core/Cargo.toml",
-        "crates/cli/Cargo.toml",
-        "crates/gui/Cargo.toml"
-      ]
+      "package-name": "tensou"
     }
   }
 }
