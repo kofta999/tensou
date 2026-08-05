@@ -5565,7 +5565,7 @@ dependencies = [
 
 [[package]]
 name = "tensou"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -5580,7 +5580,7 @@ dependencies = [
 
 [[package]]
 name = "tensou-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5597,7 +5597,7 @@ dependencies = [
 
 [[package]]
 name = "tensou-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5628,7 +5628,7 @@ dependencies = [
 
 [[package]]
 name = "tensou-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "arboard",
